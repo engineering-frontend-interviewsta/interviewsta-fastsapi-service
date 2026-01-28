@@ -1,0 +1,50 @@
+# FastAPI and server
+fastapi==0.115.5
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+pydantic==2.11.7
+pydantic-settings==2.10.1
+
+# Celery and task queue
+celery==5.4.0
+redis==6.2.0
+flower==2.0.1
+
+# Database
+psycopg2-binary==2.9.11
+sqlalchemy==2.0.41
+
+# AI/ML
+langchain==0.3.26
+langchain-core==0.3.69
+langchain-google-genai==2.1.8
+langchain-tavily==0.2.11
+langchain-community==0.3.27
+langgraph==0.6.5
+langgraph-checkpoint==2.1.1
+langgraph-checkpoint-redis==0.1.1
+
+# Audio processing
+elevenlabs==2.27.0  # For STT only
+boto3==1.35.96  # For AWS Polly TTS
+
+# Vector search (for case study interviews)
+faiss-cpu==1.9.0
+
+# OCR and document processing
+pytesseract==0.3.13
+pdf2image==1.17.0
+Pillow==11.3.0
+PyPDF2==3.0.1
+
+# Firebase
+firebase-admin==7.0.0
+
+# Utilities
+python-dotenv==1.1.1
+aiohttp==3.12.14
+requests==2.32.4
+python-jose[cryptography]==3.3.0
+
+# Monitoring
+prometheus-client==0.21.0
