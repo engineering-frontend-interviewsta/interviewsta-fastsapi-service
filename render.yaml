@@ -48,7 +48,10 @@ services:
   - type: worker
     name: interview-celery-worker
     runtime: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: |
+      apt-get update
+      apt-get install -y tesseract-ocr poppler-utils
+      pip install -r requirements.txt
     startCommand: celery -A tasks.celery_app worker -Q interview,audio,resume,feedback -c 4 --loglevel=info
     envVars:
       - key: REDIS_URL
