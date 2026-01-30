@@ -257,6 +257,7 @@ def process_resume_upload(
     Process resume upload: extract text and analyze
     
     Args:
+    
         task_id: Task identifier
         resume_bytes_b64: Base64 encoded resume file
         resume_filename: Resume filename

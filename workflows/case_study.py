@@ -14,7 +14,7 @@ import json
 import faiss
 from uuid import uuid4
 import pickle
-from django.apps import apps
+# from django.apps import apps
 
 # Practice case studies database
 practice_cases = {

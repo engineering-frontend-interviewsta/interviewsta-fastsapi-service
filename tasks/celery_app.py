@@ -4,10 +4,14 @@ Celery application configuration
 from celery import Celery
 from kombu import Exchange, Queue
 import os
+from dotenv import load_dotenv
+from pathlib import Path
+
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 
 # Get Redis URL from environment
 # If CELERY URLs not set, fall back to REDIS_URL
-REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+REDIS_URL = os.getenv("REDIS_URL", "redis://default:XDyW9potKonGk0X6swKV7hzUFbP93LMc@redis-12217.crce263.ap-south-1-1.ec2.cloud.redislabs.com:12217")
 CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL") or REDIS_URL
 CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND") or REDIS_URL
 
