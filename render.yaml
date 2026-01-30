@@ -9,8 +9,8 @@ services:
   - type: web
     name: interview-service-api
     runtime: docker
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    # buildCommand: pip install -r requirements.txt
+    dockerCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
     envVars:
       - key: REDIS_URL
@@ -48,11 +48,11 @@ services:
   - type: worker
     name: interview-celery-worker
     runtime: docker
-    buildCommand: |
-      apt-get update
-      apt-get install -y tesseract-ocr poppler-utils
-      pip install -r requirements.txt
-    startCommand: celery -A tasks.celery_app worker -Q interview,audio,resume,feedback -c 4 --loglevel=info
+    # buildCommand: |
+    #   apt-get update
+    #   apt-get install -y tesseract-ocr poppler-utils
+    #   pip install -r requirements.txt
+    dockerCommand: celery -A tasks.celery_app worker -Q interview,audio,resume,feedback -c 4 --loglevel=info
     envVars:
       - key: REDIS_URL
         sync: false
@@ -89,8 +89,8 @@ services:
   - type: worker
     name: interview-celery-beat
     runtime: docker
-    buildCommand: pip install -r requirements.txt
-    startCommand: celery -A tasks.celery_app beat --loglevel=info
+    # buildCommand: pip install -r requirements.txt
+    dockerCommand: celery -A tasks.celery_app beat --loglevel=info
     envVars:
       - key: REDIS_URL
         sync: false
