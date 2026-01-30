@@ -28,9 +28,6 @@ langgraph-checkpoint-redis==0.1.1
 elevenlabs==2.27.0  # For STT only
 boto3==1.35.96  # For AWS Polly TTS
 
-# Vector search (for case study interviews)
-faiss-cpu==1.9.0
-
 # OCR and document processing
 pytesseract==0.3.13
 pdf2image==1.17.0
@@ -48,3 +45,4 @@ python-jose[cryptography]==3.3.0
 
 # Monitoring
 prometheus-client==0.21.0
+faiss-cpu>=1.9.0.post1,<1.10
