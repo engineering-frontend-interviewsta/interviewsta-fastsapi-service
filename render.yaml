@@ -8,7 +8,7 @@ services:
   # ---------------------------------------------------------------------------
   - type: web
     name: interview-service-api
-    runtime: python
+    runtime: docker
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
@@ -47,7 +47,7 @@ services:
   # ---------------------------------------------------------------------------
   - type: worker
     name: interview-celery-worker
-    runtime: python
+    runtime: docker
     buildCommand: |
       apt-get update
       apt-get install -y tesseract-ocr poppler-utils
@@ -88,7 +88,7 @@ services:
   # ---------------------------------------------------------------------------
   - type: worker
     name: interview-celery-beat
-    runtime: python
+    runtime: docker
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A tasks.celery_app beat --loglevel=info
     envVars:
