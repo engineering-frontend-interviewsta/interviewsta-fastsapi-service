@@ -1,0 +1,100 @@
+# Interview Service – Render Blueprint
+# Uses external Redis Cloud (set REDIS_URL / CELERY_BROKER_URL in Render Dashboard).
+# On first Blueprint deploy, you'll be prompted for any env var with sync: false.
+
+services:
+  # ---------------------------------------------------------------------------
+  # 1. FastAPI Web Service
+  # ---------------------------------------------------------------------------
+  - type: web
+    name: interview-service-api
+    runtime: python
+    rootDir: interview_service
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: REDIS_URL
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: AWS_REGION
+        value: ap-south-1
+      - key: AWS_POLLY_VOICE_ID
+        value: Joanna
+      - key: AWS_POLLY_ENGINE
+        value: neural
+      - key: AWS_POLLY_SPEECH_RATE
+        value: "85%"
+
+  # ---------------------------------------------------------------------------
+  # 2. Celery Background Worker (all queues)
+  # ---------------------------------------------------------------------------
+  - type: worker
+    name: interview-celery-worker
+    runtime: python
+    rootDir: interview_service
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A tasks.celery_app worker -Q interview,audio,resume,feedback -c 4 --loglevel=info
+    envVars:
+      - key: REDIS_URL
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
+      - key: TAVILY_API_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: FIREBASE_CREDENTIALS_JSON
+        sync: false
+      - key: AWS_REGION
+        value: ap-south-1
+      - key: AWS_POLLY_VOICE_ID
+        value: Joanna
+      - key: AWS_POLLY_ENGINE
+        value: neural
+      - key: AWS_POLLY_SPEECH_RATE
+        value: "85%"
+
+  # ---------------------------------------------------------------------------
+  # 3. Celery Beat (scheduler)
+  # ---------------------------------------------------------------------------
+  - type: worker
+    name: interview-celery-beat
+    runtime: python
+    rootDir: interview_service
+    buildCommand: pip install -r requirements.txt
+    startCommand: celery -A tasks.celery_app beat --loglevel=info
+    envVars:
+      - key: REDIS_URL
+        sync: false
+      - key: CELERY_BROKER_URL
+        sync: false
+      - key: CELERY_RESULT_BACKEND
+        sync: false
