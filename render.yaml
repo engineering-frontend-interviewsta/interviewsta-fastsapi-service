@@ -9,7 +9,6 @@ services:
   - type: web
     name: interview-service-api
     runtime: python
-    rootDir: interview_service
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
@@ -49,7 +48,6 @@ services:
   - type: worker
     name: interview-celery-worker
     runtime: python
-    rootDir: interview_service
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A tasks.celery_app worker -Q interview,audio,resume,feedback -c 4 --loglevel=info
     envVars:
@@ -88,7 +86,6 @@ services:
   - type: worker
     name: interview-celery-beat
     runtime: python
-    rootDir: interview_service
     buildCommand: pip install -r requirements.txt
     startCommand: celery -A tasks.celery_app beat --loglevel=info
     envVars:
