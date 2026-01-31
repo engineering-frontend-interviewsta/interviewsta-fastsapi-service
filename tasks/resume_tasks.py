@@ -284,6 +284,22 @@ Please analyze this resume against the job description.
         import json
         redis_client.setex(redis_key, 3600, json.dumps(analysis_result))
         
+        # Save to Django database
+        try:
+            from services.django_db import save_resume_analysis_to_db
+            db_saved = save_resume_analysis_to_db(
+                user_id=user_id,
+                session_id=session_id,
+                analysis_result=analysis_result
+            )
+            if db_saved:
+                logger.info(f"Resume analysis saved to Django database for session {session_id}")
+            else:
+                logger.warning(f"Failed to save resume analysis to Django database for session {session_id}")
+        except Exception as e:
+            logger.error(f"Error saving to Django database: {e}", exc_info=True)
+            # Don't fail the task if DB save fails, Redis storage is sufficient for immediate access
+        
         # Update progress
         parent_task.update_state(
             state='PROGRESS',
