@@ -12,6 +12,7 @@ from schemas.resume import (
 )
 from api.dependencies import get_current_user, get_redis
 from tasks.resume_tasks import process_resume_upload
+from tasks.celery_app import celery_app
 from redis import Redis
 from celery.result import AsyncResult
 
@@ -81,6 +82,10 @@ async def analyze_resume(
         resume_b64 = base64.b64encode(resume_bytes).decode("utf-8")
         job_desc_b64 = base64.b64encode(job_desc_bytes).decode("utf-8")
         
+        # Generate session_id for tracking (matching old behavior)
+        import uuid
+        session_id = str(uuid.uuid4())
+        
         # Queue analysis task
         task = process_resume_upload.apply_async(
             args=[
@@ -89,7 +94,8 @@ async def analyze_resume(
                 resume.filename,
                 job_desc_b64,
                 job_description.filename,
-                user_info["uid"]
+                user_info["uid"],
+                session_id  # Pass session_id
             ],
             queue="resume"
         )
@@ -127,8 +133,8 @@ async def get_analysis_status(
         Task status and results if completed
     """
     try:
-        # Get task result
-        task_result = AsyncResult(task_id)
+        # Get task result using the same Celery app instance
+        task_result = AsyncResult(task_id, app=celery_app)
         
         # Map Celery states to our states
         state_mapping = {

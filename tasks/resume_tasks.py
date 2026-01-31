@@ -127,10 +127,11 @@ def extract_text_from_file(self, file_bytes_b64: str, filename: str) -> Dict[str
 
 def analyze_resume(
     parent_task,
-    task_id: str,
+    session_id: str,
     resume_text: str,
     job_description: str,
-    user_id: str
+    user_id: str,
+    resume_filename: str = "resume.pdf"
 ) -> Dict[str, Any]:
     """
     Analyze resume against job description using LangGraph
@@ -145,7 +146,7 @@ def analyze_resume(
         dict: Analysis results
     """
     try:
-        logger.info(f"Starting resume analysis for task {task_id}")
+        logger.info(f"Starting resume analysis for session {session_id}")
         
         # Update progress
         parent_task.update_state(
@@ -186,40 +187,102 @@ Please analyze this resume against the job description.
             meta={'progress': 80, 'status': 'Compiling results...'}
         )
         
-        # Extract results
+        # Extract results - match old Django serializer format exactly
+        job_match_score = result["section_analysis"].job_match_score
+        format_and_structure = result["section_analysis"].format_and_structure
+        content_quality = result["section_analysis"].content_quality
+        length_and_conciseness = result["section_analysis"].length_and_conciseness
+        keywords_optimization = result["section_analysis"].keywords_optimization
+        
+        # Calculate overall_score as average of all section scores (matching old behavior)
+        overall_score = round(
+            (job_match_score + format_and_structure + content_quality + 
+             length_and_conciseness + keywords_optimization) / 5.0, 
+            2
+        )
+        
         analysis_result = {
+            # Basic info
+            "session_id": session_id,
+            "resume_name": resume_filename,
             "company": result.get("company", ""),
             "role": result.get("role", ""),
+            
+            # Scores
+            "overall_score": overall_score,
+            "job_match_score": job_match_score,
+            
+            # Section analysis - keep nested for internal use
             "section_analysis": {
-                "job_match_score": result["section_analysis"].job_match_score,
-                "format_and_structure": result["section_analysis"].format_and_structure,
-                "content_quality": result["section_analysis"].content_quality,
-                "length_and_conciseness": result["section_analysis"].length_and_conciseness,
-                "keywords_optimization": result["section_analysis"].keywords_optimization,
+                "job_match_score": job_match_score,
+                "format_and_structure": format_and_structure,
+                "content_quality": content_quality,
+                "length_and_conciseness": length_and_conciseness,
+                "keywords_optimization": keywords_optimization,
             },
+            
+            # Sections array - matching old serializer format exactly
+            "sections": [
+                {"name": "job_match_score", "score": job_match_score},
+                {"name": "format_and_structure", "score": format_and_structure},
+                {"name": "content_quality", "score": content_quality},
+                {"name": "length_and_conciseness", "score": length_and_conciseness},
+                {"name": "keywords_optimization", "score": keywords_optimization}
+            ],
+            
+            # Keyword analysis
             "keyword_analysis": {
                 "found_keywords": result["keyword_analysis"].found_keywords,
                 "not_found_keywords": result["keyword_analysis"].not_found_keywords,
                 "top_3_keywords": result["keyword_analysis"].top_3_keywords,
             },
+            
+            # Keywords object - matching old serializer format
+            "keywords": {
+                "found": result["keyword_analysis"].found_keywords,
+                "missing": result["keyword_analysis"].not_found_keywords,
+                "jobSpecific": result["keyword_analysis"].top_3_keywords,
+                "score": keywords_optimization
+            },
+            
+            # Job alignment - matching old serializer format
             "job_alignment": {
                 "required_skills": result["job_alignment_analysis"].required_skills,
                 "preferred_skills": result["job_alignment_analysis"].preferred_skills,
                 "experience": result["job_alignment_analysis"].experience,
                 "education": result["job_alignment_analysis"].education,
+                "overall": job_match_score,  # Add overall field matching old format
                 "insights": result["job_alignment_analysis"].insights,
             },
+            
+            # Job alignment alias for compatibility
+            "jobalignment": {
+                "requiredSkills": result["job_alignment_analysis"].required_skills,
+                "preferredSkills": result["job_alignment_analysis"].preferred_skills,
+                "experience": result["job_alignment_analysis"].experience,
+                "education": result["job_alignment_analysis"].education,
+                "overall": job_match_score,
+                "insights": result["job_alignment_analysis"].insights,
+            },
+            
+            # Strengths and improvements
             "strengths_and_improvements": {
                 "candidate_strengths": result["strengths_and_improvements"].candidate_strengths,
                 "candidates_areas_of_improvements": result["strengths_and_improvements"].candidates_areas_of_improvements,
-            }
+            },
+            
+            # Direct fields for frontend compatibility
+            "candidate_strengths": result["strengths_and_improvements"].candidate_strengths,
+            "candidates_areas_of_improvements": result["strengths_and_improvements"].candidates_areas_of_improvements,
+            "insights": result["job_alignment_analysis"].insights,
         }
         
         # Store in Redis (use parent task's redis client)
         redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         redis_client = Redis.from_url(redis_url, decode_responses=True)
-        redis_key = f"resume_analysis:{task_id}"
-        redis_client.setex(redis_key, 3600, str(analysis_result))
+        redis_key = f"resume_analysis:{session_id}"
+        import json
+        redis_client.setex(redis_key, 3600, json.dumps(analysis_result))
         
         # Update progress
         parent_task.update_state(
@@ -227,7 +290,7 @@ Please analyze this resume against the job description.
             meta={'progress': 95, 'status': 'Analysis completed'}
         )
         
-        logger.info(f"Resume analysis completed for task {task_id}")
+        logger.info(f"Resume analysis completed for session {session_id}")
         
         return {
             "status": "completed",
@@ -251,7 +314,8 @@ def process_resume_upload(
     resume_filename: str,
     job_desc_bytes_b64: str,
     job_desc_filename: str,
-    user_id: str
+    user_id: str,
+    session_id: str = None
 ) -> Dict[str, Any]:
     """
     Process resume upload: extract text and analyze
@@ -298,7 +362,16 @@ def process_resume_upload(
         job_description = job_desc_result["text"]
         
         # Analyze resume (pass self as parent_task for progress updates)
-        analysis_result = analyze_resume(self, actual_task_id, resume_text, job_description, user_id)
+        # Pass session_id if provided, otherwise use task_id
+        session_id_to_use = session_id if session_id else actual_task_id
+        analysis_result = analyze_resume(
+            self, 
+            session_id_to_use, 
+            resume_text, 
+            job_description, 
+            user_id,
+            resume_filename
+        )
         
         return analysis_result
         
