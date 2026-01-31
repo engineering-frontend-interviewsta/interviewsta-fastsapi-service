@@ -12,14 +12,15 @@ logger = logging.getLogger(__name__)
 
 
 class AudioTask(Task):
-    """Base task with shared AudioProcessor (ElevenLabs STT + AWS Polly TTS)"""
+    """Base task with shared AudioProcessor (Cartesia STT + AWS Polly TTS)"""
     _audio_processor = None
     
     @property
     def audio_processor(self):
         if self._audio_processor is None:
-            # ElevenLabs for STT
-            elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY", "")
+            # Cartesia for STT
+            cartesia_api_key = os.getenv("CARTESIA_API_KEY", "")
+            cartesia_model = os.getenv("CARTESIA_MODEL", "ink-whisper")
             
             # AWS Polly for TTS
             aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID", "")
@@ -30,13 +31,14 @@ class AudioTask(Task):
             polly_speech_rate = os.getenv("AWS_POLLY_SPEECH_RATE", "75%")
             
             self._audio_processor = AudioProcessor(
-                elevenlabs_api_key=elevenlabs_api_key,
+                cartesia_api_key=cartesia_api_key,
                 aws_access_key_id=aws_access_key_id or None,
                 aws_secret_access_key=aws_secret_access_key or None,
                 aws_region=aws_region,
                 polly_voice_id=polly_voice_id,
                 polly_engine=polly_engine,
-                polly_speech_rate=polly_speech_rate
+                polly_speech_rate=polly_speech_rate,
+                cartesia_model=cartesia_model
             )
         return self._audio_processor
 
@@ -44,7 +46,7 @@ class AudioTask(Task):
 @celery_app.task(bind=True, base=AudioTask, name="tasks.audio_tasks.transcribe_audio")
 def transcribe_audio(self, audio_base64: str) -> Dict[str, Any]:
     """
-    Transcribe audio to text using ElevenLabs STT
+    Transcribe audio to text using Cartesia ink-whisper STT
     
     Args:
         audio_base64: Base64 encoded audio (WAV format)

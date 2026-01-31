@@ -44,8 +44,9 @@ class InterviewTask(Task):
     @property
     def audio_processor(self):
         if self._audio_processor is None:
-            # Initialize audio processor for ElevenLabs STT and AWS Polly TTS
-            elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY", "")
+            # Initialize audio processor for Cartesia STT and AWS Polly TTS
+            cartesia_api_key = os.getenv("CARTESIA_API_KEY", "")
+            cartesia_model = os.getenv("CARTESIA_MODEL", "ink-whisper")
             aws_access_key_id = os.getenv("AWS_ACCESS_KEY_ID", "")
             aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY", "")
             aws_region = os.getenv("AWS_REGION", "ap-south-1")
@@ -54,13 +55,14 @@ class InterviewTask(Task):
             polly_speech_rate = os.getenv("AWS_POLLY_SPEECH_RATE", "85%")
             
             self._audio_processor = AudioProcessor(
-                elevenlabs_api_key=elevenlabs_api_key,  # Required parameter
+                cartesia_api_key=cartesia_api_key,
                 aws_access_key_id=aws_access_key_id or None,
                 aws_secret_access_key=aws_secret_access_key or None,
                 aws_region=aws_region,
                 polly_voice_id=polly_voice_id,
                 polly_engine=polly_engine,
-                polly_speech_rate=polly_speech_rate
+                polly_speech_rate=polly_speech_rate,
+                cartesia_model=cartesia_model
             )
         return self._audio_processor
 

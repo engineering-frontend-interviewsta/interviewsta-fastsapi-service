@@ -1,7 +1,7 @@
 """
-Audio processing service using ElevenLabs (STT) and AWS Polly (TTS)
+Audio processing service using Cartesia ink-whisper (STT) and AWS Polly (TTS)
 """
-from elevenlabs.client import ElevenLabs
+from openai import OpenAI
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 import base64
@@ -15,32 +15,38 @@ logger = logging.getLogger(__name__)
 
 
 class AudioProcessor:
-    """Handle STT with ElevenLabs and TTS with AWS Polly"""
+    """Handle STT with Cartesia ink-whisper and TTS with AWS Polly"""
     
     def __init__(
         self, 
-        elevenlabs_api_key: str,
+        cartesia_api_key: str,
         aws_access_key_id: str = None,
         aws_secret_access_key: str = None,
         aws_region: str = "ap-south-1",
         polly_voice_id: str = "Joanna",
         polly_engine: str = "neural",
-        polly_speech_rate: str = "75%"
+        polly_speech_rate: str = "75%",
+        cartesia_model: str = "ink-whisper"
     ):
         """
-        Initialize AudioProcessor with ElevenLabs (STT) and AWS Polly (TTS)
+        Initialize AudioProcessor with Cartesia ink-whisper (STT) and AWS Polly (TTS)
         
         Args:
-            elevenlabs_api_key: ElevenLabs API key for STT
+            cartesia_api_key: Cartesia API key for STT
             aws_access_key_id: AWS access key (optional, uses env/IAM role if not provided)
             aws_secret_access_key: AWS secret key (optional)
             aws_region: AWS region for Polly
             polly_voice_id: AWS Polly voice ID
             polly_engine: Polly engine ('neural' or 'standard')
             polly_speech_rate: Speech rate in SSML format (e.g., '75%', 'slow', 'medium')
+            cartesia_model: Cartesia STT model (default: 'ink-whisper')
         """
-        # Initialize ElevenLabs for STT
-        self.elevenlabs_client = ElevenLabs(api_key=elevenlabs_api_key)
+        # Initialize Cartesia for STT using OpenAI SDK
+        self.cartesia_client = OpenAI(
+            api_key=cartesia_api_key,
+            base_url="https://api.cartesia.ai"
+        )
+        self.cartesia_model = cartesia_model
         
         # Initialize AWS Polly for TTS
         if aws_access_key_id and aws_secret_access_key:
@@ -58,11 +64,11 @@ class AudioProcessor:
         self.polly_engine = polly_engine
         self.polly_speech_rate = polly_speech_rate
         
-        logger.info(f"AudioProcessor initialized: ElevenLabs (STT), AWS Polly (TTS, voice={polly_voice_id}, rate={polly_speech_rate})")
+        logger.info(f"🔧 AudioProcessor initialized: STT=Cartesia/{self.cartesia_model}, TTS=AWS Polly/{polly_voice_id} (rate={polly_speech_rate})")
     
     def transcribe_audio(self, audio_base64: str) -> str:
         """
-        Transcribe audio using ElevenLabs STT
+        Transcribe audio using Cartesia ink-whisper STT
         
         Args:
             audio_base64: Base64 encoded audio (WAV format)
@@ -82,26 +88,26 @@ class AudioProcessor:
             
             # Check file size
             file_size = os.path.getsize(temp_path)
-            logger.info(f"Transcribing audio with ElevenLabs STT ({file_size} bytes)")
+            logger.info(f"🎤 STT MODEL: Using Cartesia '{self.cartesia_model}' for transcription ({file_size} bytes)")
             
             if file_size == 0:
                 raise ValueError("Audio file is empty")
             
-            # Transcribe using ElevenLabs
+            # Transcribe using Cartesia (via OpenAI SDK)
             with open(temp_path, "rb") as audio_file:
-                result = self.elevenlabs_client.speech_to_text.convert(
+                result = self.cartesia_client.audio.transcriptions.create(
                     file=audio_file,
-                    model_id="scribe_v1",
-                    language_code="eng"
+                    model=self.cartesia_model,
+                    language="en"
                 )
             
             transcription = result.text.strip()
-            logger.info(f"ElevenLabs transcription completed: '{transcription[:50]}...'")
+            logger.info(f"✅ STT SUCCESS: Cartesia '{self.cartesia_model}' transcription completed: '{transcription[:50]}...'")
             
             return transcription
             
         except Exception as e:
-            logger.error(f"Error transcribing audio with ElevenLabs: {e}")
+            logger.error(f"❌ STT ERROR: Cartesia '{self.cartesia_model}' transcription failed: {e}")
             raise
         finally:
             # Cleanup temp file

@@ -5,11 +5,11 @@ High-performance microservice for AI-powered interview sessions, built with Fast
 ## Architecture
 
 ### Audio Processing
-- **Speech-to-Text (STT)**: ElevenLabs API for transcription
+- **Speech-to-Text (STT)**: Cartesia API (ink-whisper model) for transcription
 - **Text-to-Speech (TTS)**: AWS Polly for speech synthesis
   - Supports neural and standard voices
   - Configurable speech rate (SSML)
-  - Lower latency than ElevenLabs
+  - Lower latency and better pricing than ElevenLabs
 
 ### Task Queuing
 Celery workers with dedicated queues:
@@ -31,8 +31,10 @@ Celery workers with dedicated queues:
 GOOGLE_API_KEY=your_key          # Gemini LLM
 TAVILY_API_KEY=your_key          # Web search
 
-# Audio - STT (ElevenLabs)
-ELEVENLABS_API_KEY=your_key      # Speech-to-Text only
+# Audio - STT (Cartesia)
+CARTESIA_API_KEY=your_key         # Speech-to-Text only
+CARTESIA_MODEL=ink-whisper       # Optional, defaults to ink-whisper
+CARTESIA_API_VERSION=2025-04-16  # Optional, defaults to 2025-04-16
 
 # Audio - TTS (AWS Polly)
 AWS_ACCESS_KEY_ID=your_key
@@ -152,7 +154,7 @@ from services.audio_processor import AudioProcessor
 import os
 
 processor = AudioProcessor(
-    elevenlabs_api_key=os.getenv("ELEVENLABS_API_KEY"),
+    cartesia_api_key=os.getenv("CARTESIA_API_KEY"),
     aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
     aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
     aws_region="us-east-1",
@@ -166,7 +168,7 @@ with open("test.mp3", "wb") as f:
     f.write(audio_bytes)
 ```
 
-### Test STT (ElevenLabs)
+### Test STT (Cartesia)
 ```python
 import base64
 
@@ -216,11 +218,11 @@ interview_service/
 ├── tasks/
 │   ├── celery_app.py      # Celery configuration
 │   ├── interview_tasks.py # Interview processing
-│   ├── audio_tasks.py     # STT/TTS (ElevenLabs + Polly)
+│   ├── audio_tasks.py     # STT/TTS (Cartesia + Polly)
 │   ├── resume_tasks.py    # Resume OCR + analysis
 │   └── feedback_tasks.py  # Feedback generation
 ├── services/
-│   ├── audio_processor.py # ElevenLabs STT + AWS Polly TTS
+│   ├── audio_processor.py # Cartesia STT + AWS Polly TTS
 │   └── interview_session.py # Redis session manager
 ├── workflows/
 │   ├── technical.py       # Technical interview graph
@@ -272,21 +274,26 @@ docker-compose up -d --scale celery-worker-audio=4
 - Standard: 3000 char limit
 - Text is auto-truncated
 
-### ElevenLabs STT Errors
+### Cartesia STT Errors
 
 **Error: "Invalid API key"**
-- Verify `ELEVENLABS_API_KEY` is set correctly
+- Verify `CARTESIA_API_KEY` is set correctly
+- Get your API key from https://play.cartesia.ai/keys
 
 **Error: "Audio file too large"**
-- ElevenLabs has file size limits
-- Consider chunking audio
+- Cartesia supports various formats (WAV, MP3, etc.)
+- Consider chunking very long audio files
 
-## Migration from ElevenLabs TTS
+**Error: "Request timeout"**
+- Check network connectivity
+- Verify Cartesia API is accessible
 
-If you previously used ElevenLabs for both STT and TTS:
+## Migration from ElevenLabs STT
 
-1. **Keep ElevenLabs API key** - Still used for STT
-2. **Add AWS credentials** - For Polly TTS
+If you previously used ElevenLabs for STT:
+
+1. **Get Cartesia API key** - Sign up at https://play.cartesia.ai
+2. **Replace `ELEVENLABS_API_KEY`** with `CARTESIA_API_KEY` in your environment
 3. **Update env vars** - See `.env.example`
 4. **Rebuild containers** - `docker-compose up -d --build`
 

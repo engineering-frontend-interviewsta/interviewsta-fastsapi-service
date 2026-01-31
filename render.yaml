@@ -23,7 +23,7 @@ services:
         sync: false
       - key: GOOGLE_API_KEY
         sync: false
-      - key: ELEVENLABS_API_KEY
+      - key: CARTESIA_API_KEY
         sync: false
       - key: TAVILY_API_KEY
         sync: false
@@ -64,7 +64,7 @@ services:
         sync: false
       - key: GOOGLE_API_KEY
         sync: false
-      - key: ELEVENLABS_API_KEY
+      - key: CARTESIA_API_KEY
         sync: false
       - key: TAVILY_API_KEY
         sync: false

@@ -26,7 +26,8 @@ class Settings(BaseSettings):
     
     # API Keys
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
-    ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
+    CARTESIA_API_KEY: str = os.getenv("CARTESIA_API_KEY", "")
+    CARTESIA_MODEL: str = os.getenv("CARTESIA_MODEL", "ink-whisper")
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
     
     # Firebase
@@ -48,10 +49,6 @@ class Settings(BaseSettings):
     # Session settings
     SESSION_EXPIRE_SECONDS: int = 3600  # 1 hour
     MAX_AUDIO_SIZE_MB: int = 10
-    
-    # ElevenLabs (STT only)
-    ELEVENLABS_VOICE_ID: str = "EaBs7G1VibMrNAuz2Na7"
-    ELEVENLABS_MODEL_ID: str = "eleven_flash_v2"
     
     # AWS Polly (TTS)
     AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")

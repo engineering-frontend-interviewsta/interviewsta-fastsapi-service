@@ -25,8 +25,9 @@ langgraph-checkpoint==2.1.1
 langgraph-checkpoint-redis==0.1.1
 
 # Audio processing
-elevenlabs==2.27.0  # For STT only
+openai>=1.0.0  # For Cartesia STT via OpenAI SDK
 boto3==1.35.96  # For AWS Polly TTS
+# requests is already included in utilities below
 
 # OCR and document processing
 pytesseract==0.3.13
