@@ -7,6 +7,7 @@ from typing import Dict, Any
 import logging
 import asyncio
 import json
+from datetime import datetime
 
 from schemas.interview import (
     InterviewStartRequest,
@@ -106,6 +107,18 @@ async def submit_response(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to access this session"
             )
+        
+        # Check if there's already a processing task (prevent audio queue buildup)
+        processing_key = f"session:{session_id}:processing"
+        is_processing = redis_client.get(processing_key)
+        if is_processing:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Previous response is still being processed. Please wait."
+            )
+        
+        # Set processing flag
+        redis_client.setex(processing_key, 15, "true") # Set flag for 15 seconds
         
         # Process audio or use text response
         human_input = request.text_response
@@ -249,6 +262,7 @@ async def submit_video_quality(
     Submit video quality and behavioral metrics
     
     Used for soft skills tracking (gaze, confidence, nervousness, etc.)
+    Also triggers warnings for video quality issues (face detection, engagement, etc.)
     """
     try:
         session_manager = InterviewSessionManager(redis_client)
@@ -258,17 +272,88 @@ async def submit_video_quality(
         if not session or session["user_id"] != user_info["uid"]:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         
-        # Store metrics (simplified - in production might aggregate)
+        # Store metrics for aggregation
         metrics_key = f"session:{session_id}:video_metrics"
-        redis_client.lpush(metrics_key, str(data.dict()))
+        metrics_data = data.dict()
+        redis_client.lpush(metrics_key, json.dumps(metrics_data))
         redis_client.expire(metrics_key, 3600)
         
-        # In production, you might trigger warnings based on thresholds
-        # For now, just acknowledge receipt
+        # Track video strikes for face detection (like old code)
+        strikes_key = f"session:{session_id}:video_strikes"
+        current_strikes = int(redis_client.get(strikes_key) or 0)
+        
+        # Check face status and increment strikes
+        face_status = metrics_data.get("face", "ok")
+        warning_message = None
+        warning_type = None
+        
+        if face_status != "ok":
+            current_strikes += 1
+            redis_client.setex(strikes_key, 3600, current_strikes)
+            
+            if current_strikes == 1:
+                warning_message = "I am unable to see you, can I ask you to kindly come back in frame and stay still."
+                warning_type = "face_detection"
+            elif current_strikes == 3:
+                warning_message = "This is the final warning before I disconnect the call, I ask you again to kindly come back in frame and proceed with the interview"
+                warning_type = "face_detection_final"
+            elif current_strikes >= 5:
+                warning_message = "Alright seems like you are unable to make into the frame, in that case - thanks for joining the interview and I will be ending our call now."
+                warning_type = "face_detection_terminate"
+                # Store termination flag for SSE stream to pick up
+                session_manager.set_warning(session_id, warning_type, warning_message)
+                return {
+                    "status": "accepted",
+                    "message": "Video quality data recorded",
+                    "warning": {
+                        "type": warning_type,
+                        "message": warning_message
+                    },
+                    "terminate": True
+                }
+        else:
+            # Reset strikes if face is detected
+            if current_strikes > 0:
+                redis_client.delete(strikes_key)
+        
+        # Check behavioral metrics for engagement/distraction warnings (every 10 samples)
+        if face_status == "ok":
+            # Get recent metrics for aggregation
+            recent_metrics = redis_client.lrange(metrics_key, 0, 9)  # Last 10 samples
+            if len(recent_metrics) >= 10:
+                engagement_values = []
+                distraction_values = []
+                
+                for metric_str in recent_metrics:
+                    try:
+                        metric = json.loads(metric_str)
+                        if metric.get("engagement") is not None:
+                            engagement_values.append(metric["engagement"])
+                        if metric.get("distraction") is not None:
+                            distraction_values.append(metric["distraction"])
+                    except:
+                        continue
+                
+                if engagement_values and distraction_values:
+                    avg_engagement = sum(engagement_values) / len(engagement_values)
+                    avg_distraction = sum(distraction_values) / len(distraction_values)
+                    
+                    # Send warning if engagement is low or distraction is high
+                    if avg_engagement < 50 or avg_distraction > 70:
+                        warning_message = "Please stay attentive and maintain eye contact with the camera."
+                        warning_type = "engagement"
+        
+        # Store warning if any
+        if warning_message and warning_type:
+            session_manager.set_warning(session_id, warning_type, warning_message)
         
         return {
             "status": "accepted",
-            "message": "Video quality data recorded"
+            "message": "Video quality data recorded",
+            "warning": {
+                "type": warning_type,
+                "message": warning_message
+            } if warning_message else None
         }
         
     except Exception as e:
@@ -373,20 +458,32 @@ async def stream_interview_status(
                     # Check for new transcription
                     transcript = session_manager.get_transcript(session_id)
                     if transcript:
+                        # Send transcript once, then clear it to prevent infinite loop
                         yield f"event: transcription\ndata: {json.dumps({'text': transcript})}\n\n"
-                        # Clear transcript after sending
+                        # Clear transcript after sending (like old code behavior)
                         session_manager.set_transcript(session_id, "")
+                    
+                    # Check for video quality warnings
+                    warning = session_manager.get_warning(session_id)
+                    if warning:
+                        yield f"event: quality_warning\ndata: {json.dumps(warning)}\n\n"
+                        # If warning is termination, close stream
+                        if warning.get("type") == "face_detection_terminate":
+                            yield f"event: error\ndata: {json.dumps({'error': warning.get('message'), 'fatal': True})}\n\n"
+                            break
                     
                     await asyncio.sleep(1)  # Poll every second
                     
                 except Exception as e:
-                    logger.error(f"Error in SSE stream: {e}")
-                    yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
-                    break
+                    logger.error(f"Error in SSE stream: {e}", exc_info=True)
+                    yield f"event: error\ndata: {json.dumps({'error': str(e), 'fatal': False})}\n\n"
+                    # Don't break on non-fatal errors, continue polling
+                    await asyncio.sleep(1)
+                    continue
                     
         except Exception as e:
-            logger.error(f"Fatal error in SSE generator: {e}")
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+            logger.error(f"Fatal error in SSE generator: {e}", exc_info=True)
+            yield f"event: error\ndata: {json.dumps({'error': str(e), 'fatal': True})}\n\n"
     
     return StreamingResponse(
         event_generator(),
@@ -397,6 +494,115 @@ async def stream_interview_status(
             "X-Accel-Buffering": "no"
         }
     )
+
+
+@router.post("/end")
+async def end_interview(
+    request: Dict[str, Any],
+    user_info: Dict = Depends(get_current_user),
+    redis_client: Redis = Depends(get_redis)
+):
+    """
+    End an interview session and trigger feedback generation
+    
+    This endpoint:
+    1. Marks the session as ended
+    2. Stores session metadata (duration, interview_type, etc.)
+    3. Triggers feedback generation if session_finished is True
+    4. Returns success response
+    """
+    try:
+        session_id = request.get("session_id")
+        interview_type = request.get("interview_type")
+        interview_test_id = request.get("interview_test_id")
+        duration = request.get("duration", 0)
+        session_finished = request.get("session_finished", False)
+        
+        if not session_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="session_id is required"
+            )
+        
+        session_manager = InterviewSessionManager(redis_client)
+        
+        # Verify ownership
+        session = session_manager.get_session(session_id)
+        if not session:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Session not found"
+            )
+        
+        if session["user_id"] != user_info["uid"]:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this session"
+            )
+        
+        # Mark session as ended
+        session_manager.set_status(session_id, "completed")
+        
+        # Store session metadata
+        session_manager.update_session(session_id, {
+            "duration": int(duration) if isinstance(duration, (int, str)) else 0,
+            "interview_type": interview_type,
+            "interview_test_id": interview_test_id,
+            "session_finished": session_finished,
+            "ended_at": datetime.utcnow().isoformat()
+        })
+        
+        # If session is finished and has conversation history, trigger feedback generation
+        if session_finished:
+            history = session.get("history", "")
+            if history:
+                try:
+                    from tasks.feedback_tasks import (
+                        generate_technical_feedback,
+                        generate_hr_feedback,
+                        generate_case_study_feedback
+                    )
+                    
+                    # Queue appropriate feedback task
+                    # Map "Coding" to "Technical" for feedback generation
+                    feedback_type = "Technical" if interview_type in ["Technical", "Coding"] else interview_type
+                    
+                    if feedback_type == "Technical":
+                        generate_technical_feedback.apply_async(
+                            args=[session_id, history, user_info["uid"]],
+                            queue="feedback"
+                        )
+                    elif feedback_type == "HR":
+                        generate_hr_feedback.apply_async(
+                            args=[session_id, history, user_info["uid"]],
+                            queue="feedback"
+                        )
+                    elif feedback_type == "CaseStudy":
+                        generate_case_study_feedback.apply_async(
+                            args=[session_id, history, user_info["uid"]],
+                            queue="feedback"
+                        )
+                    
+                    logger.info(f"Feedback generation queued for session {session_id}")
+                except Exception as e:
+                    logger.warning(f"Failed to queue feedback generation for session {session_id}: {e}")
+        
+        logger.info(f"Interview session {session_id} ended successfully")
+        
+        return {
+            "status": "ended",
+            "session_id": session_id,
+            "message": "Interview ended successfully"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error ending interview: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to end interview: {str(e)}"
+        )
 
 
 @router.delete("/{session_id}")

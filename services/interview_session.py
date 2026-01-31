@@ -238,6 +238,7 @@ class InterviewSessionManager:
                 self._get_key(session_id, "status"),
                 self._get_key(session_id, "response"),
                 self._get_key(session_id, "transcript"),
+                self._get_key(session_id, "warning"),
             ]
             
             for key in keys:
@@ -249,3 +250,136 @@ class InterviewSessionManager:
         except Exception as e:
             logger.error(f"Error extending expiry for session {session_id}: {e}")
             return False
+    
+    def set_warning(self, session_id: str, warning_type: str, message: str) -> bool:
+        """Store warning message for SSE stream to pick up"""
+        try:
+            warning_data = {
+                "type": warning_type,
+                "message": message,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            warning_key = self._get_key(session_id, "warning")
+            self.redis.setex(warning_key, self.expire_seconds, json.dumps(warning_data))
+            return True
+        except Exception as e:
+            logger.error(f"Error setting warning for session {session_id}: {e}")
+            return False
+    
+    def get_warning(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Get and clear warning message"""
+        try:
+            warning_key = self._get_key(session_id, "warning")
+            data = self.redis.get(warning_key)
+            if data:
+                warning = json.loads(data)
+                # Clear warning after reading
+                self.redis.delete(warning_key)
+                return warning
+            return None
+        except Exception as e:
+            logger.error(f"Error getting warning for session {session_id}: {e}")
+            return None
+    
+    def get_soft_skills_summary(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Aggregate soft skills metrics from video quality data
+        Similar to old code's _compute_soft_skill_summary
+        """
+        try:
+            metrics_key = f"session:{session_id}:video_metrics"
+            all_metrics = redis_client.lrange(metrics_key, 0, -1)  # Get all metrics
+            
+            if not all_metrics:
+                return {
+                    'eye_contact': 0,
+                    'confidence': 0,
+                    'nervousness': 0,
+                    'engagement': 0,
+                    'distraction': 0,
+                    'verdict': 'No Data',
+                    'speech_summary': {
+                        'grammar': 0,
+                        'fluency': 0,
+                        'fillers': 0,
+                        'clarity': 0
+                    }
+                }
+            
+            # Aggregate metrics
+            gaze_values = []
+            confidence_values = []
+            nervousness_values = []
+            engagement_values = []
+            distraction_values = []
+            
+            for metric_str in all_metrics:
+                try:
+                    metric = json.loads(metric_str)
+                    if metric.get("gaze") is not None:
+                        gaze_values.append(metric["gaze"])
+                    if metric.get("confidence") is not None:
+                        confidence_values.append(metric["confidence"])
+                    if metric.get("nervousness") is not None:
+                        nervousness_values.append(metric["nervousness"])
+                    if metric.get("engagement") is not None:
+                        engagement_values.append(metric["engagement"])
+                    if metric.get("distraction") is not None:
+                        distraction_values.append(metric["distraction"])
+                except:
+                    continue
+            
+            # Compute averages
+            eye_contact = sum(gaze_values) / len(gaze_values) if gaze_values else 0
+            confidence = sum(confidence_values) / len(confidence_values) if confidence_values else 0
+            nervousness = sum(nervousness_values) / len(nervousness_values) if nervousness_values else 0
+            engagement = sum(engagement_values) / len(engagement_values) if engagement_values else 0
+            distraction = sum(distraction_values) / len(distraction_values) if distraction_values else 0
+            
+            # Compute overall score (weighted average)
+            normalized_engagement = engagement
+            normalized_confidence = confidence
+            normalized_eye_contact = eye_contact
+            normalized_nervousness = 100 - nervousness  # Invert: lower nervousness = higher score
+            normalized_distraction = 100 - distraction  # Invert: lower distraction = higher score
+            
+            overall_score = (
+                normalized_engagement * 0.25 +
+                normalized_confidence * 0.25 +
+                normalized_eye_contact * 0.20 +
+                normalized_nervousness * 0.15 +
+                normalized_distraction * 0.15
+            )
+            
+            # Determine verdict
+            if overall_score >= 85:
+                verdict = "Excellent"
+            elif overall_score >= 70:
+                verdict = "Good"
+            else:
+                verdict = "Needs Improvement"
+            
+            # Generate speech scores (simplified - in production might use actual speech analysis)
+            speech_summary = {
+                'grammar': min(100, max(0, confidence * 0.8)),
+                'fluency': min(100, max(0, engagement * 0.9)),
+                'fillers': min(100, max(0, (100 - nervousness) * 0.7)),
+                'clarity': min(100, max(0, confidence * 0.85))
+            }
+            
+            summary = {
+                'eye_contact': round(eye_contact, 2),
+                'confidence': round(confidence, 2),
+                'nervousness': round(nervousness, 2),
+                'engagement': round(engagement, 2),
+                'distraction': round(distraction, 2),
+                'overall_score': round(overall_score, 2),
+                'verdict': verdict,
+                'speech_summary': speech_summary
+            }
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error computing soft skills summary for session {session_id}: {e}")
+            return None

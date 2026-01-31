@@ -5,6 +5,7 @@ from celery import Task
 from tasks.celery_app import celery_app
 from typing import Dict, Any
 import logging
+import json
 from redis import Redis
 import os
 from datetime import datetime, timedelta
@@ -270,6 +271,20 @@ def process_user_response(self, session_id: str, human_input: str) -> Dict[str, 
         
         # Check if interview is finished
         if not len(current_state.next):
+            # Compute and store soft skills summary before completion
+            try:
+                soft_skills_summary = self.session_manager.get_soft_skills_summary(session_id)
+                if soft_skills_summary:
+                    soft_skills_key = f"session:{session_id}:soft_skills_summary"
+                    self.redis_client.setex(soft_skills_key, 3600, json.dumps(soft_skills_summary))
+                    logger.info(f"Stored soft skills summary for session {session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to compute soft skills summary for session {session_id}: {e}")
+            
+            # Clear processing flag
+            processing_key = f"session:{session_id}:processing"
+            self.redis_client.delete(processing_key)
+            
             self.session_manager.set_status(session_id, "completed")
             return {
                 "session_id": session_id,
@@ -328,6 +343,10 @@ def process_user_response(self, session_id: str, human_input: str) -> Dict[str, 
         self.session_manager.set_response(session_id, message, audio_base64, last_node)
         self.session_manager.set_status(session_id, "ai_responded")
         
+        # Clear processing flag
+        processing_key = f"session:{session_id}:processing"
+        self.redis_client.delete(processing_key)
+        
         logger.info(f"User response processed for session {session_id}")
         
         return {
@@ -340,6 +359,9 @@ def process_user_response(self, session_id: str, human_input: str) -> Dict[str, 
     except Exception as e:
         logger.error(f"Error processing response for session {session_id}: {e}", exc_info=True)
         self.session_manager.set_status(session_id, "error")
+        # Clear processing flag on error
+        processing_key = f"session:{session_id}:processing"
+        self.redis_client.delete(processing_key)
         raise
 
 

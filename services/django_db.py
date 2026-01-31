@@ -14,10 +14,14 @@ _django_initialized = False
 ResumeAnalysis = None
 User = None
 UserProfile = None
+TechnicalFeedback = None
+HRFeedback = None
+CaseStudyFeedback = None
+InterviewTest = None
 
 def _init_django():
     """Initialize Django - call this lazily when needed"""
-    global _django_initialized, ResumeAnalysis, User, UserProfile
+    global _django_initialized, ResumeAnalysis, User, UserProfile, TechnicalFeedback, HRFeedback, CaseStudyFeedback, InterviewTest
     
     if _django_initialized:
         return True
@@ -39,7 +43,10 @@ def _init_django():
         django.setup()
         
         # Import Django models
-        from myapp.models import ResumeAnalysis, User, UserProfile
+        from myapp.models import (
+            ResumeAnalysis, User, UserProfile,
+            TechnicalFeedback, HRFeedback, CaseStudyFeedback, InterviewTest
+        )
         _django_initialized = True
         logger.info("Django initialized successfully for database access")
         return True
@@ -135,4 +142,172 @@ def save_resume_analysis_to_db(
         
     except Exception as e:
         logger.error(f"Error saving resume analysis to database: {e}", exc_info=True)
+        return False
+
+
+def save_feedback_to_db(
+    user_id: str,
+    session_id: str,
+    interview_type: str,
+    interview_test_id: int,
+    duration_seconds: int,
+    feedback_data: dict,
+    interaction_log: list,
+    soft_skill_summary: dict = None,
+    big5_profile: dict = None
+) -> bool:
+    """
+    Save interview feedback to Django database
+    
+    Args:
+        user_id: Firebase user ID (UID)
+        session_id: Session ID for the interview
+        interview_type: Type of interview (Technical, HR, CaseStudy)
+        interview_test_id: InterviewTest ID (can be None)
+        duration_seconds: Interview duration in seconds
+        feedback_data: Dictionary containing feedback scores and results
+        interaction_log: List of interaction history (Q&A pairs)
+        soft_skill_summary: Optional soft skills summary dict
+        big5_profile: Optional Big-5 profile dict
+        
+    Returns:
+        bool: True if saved successfully, False otherwise
+    """
+    global TechnicalFeedback, HRFeedback, CaseStudyFeedback, InterviewTest, User, UserProfile
+    
+    # Check if Django is available
+    if not _django_initialized:
+        if not _init_django():
+            logger.warning("Django not initialized, skipping database save")
+            return False
+    
+    # Re-import models if needed
+    if TechnicalFeedback is None:
+        try:
+            from myapp.models import (
+                TechnicalFeedback, HRFeedback, CaseStudyFeedback, InterviewTest, User, UserProfile
+            )
+        except Exception as e:
+            logger.error(f"Failed to import Django models: {e}", exc_info=True)
+            return False
+    
+    try:
+        # Get Django User by Firebase UID
+        profile = UserProfile.objects.filter(firebase_uid=user_id).first()
+        if not profile:
+            logger.warning(f"User profile not found for Firebase UID: {user_id}")
+            return False
+        user = profile.user
+        
+        # Convert duration from seconds to TimeField
+        import datetime
+        hours, remainder = divmod(duration_seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        duration = datetime.time(hours, minutes, seconds)
+        
+        # Map interview types to Django format
+        django_interview_type = None
+        if interview_type in ["Technical", "Coding"]:
+            django_interview_type = "Technical Interview"
+        elif interview_type == "HR":
+            django_interview_type = "HR Interview"
+        elif interview_type == "CaseStudy":
+            django_interview_type = "Case Study Interview"
+        else:
+            logger.warning(f"Unknown interview type: {interview_type}")
+            return False
+        
+        # Get or create InterviewTest object
+        interview_test = None
+        if interview_test_id:
+            try:
+                interview_test = InterviewTest.objects.get(id=interview_test_id)
+            except InterviewTest.DoesNotExist:
+                logger.warning(f"InterviewTest {interview_test_id} not found, will use default")
+        
+        # If no interview_test_id or not found, get default for interview type
+        if not interview_test:
+            interview_test = InterviewTest.objects.filter(
+                interview_mode=django_interview_type
+            ).first()
+            if not interview_test:
+                logger.error(f"No InterviewTest found for {django_interview_type}")
+                return False
+        
+        # Prepare common feedback data
+        common_data = {
+            "user": user,
+            "session_id": session_id,
+            "interview_type": interview_test,
+            "duration": duration,
+            "strengths": feedback_data.get("strengths", []),
+            "areas_of_improvements": feedback_data.get("areas_of_improvements", []),
+            "interaction_log": interaction_log,
+            "interaction_status_log": feedback_data.get("interaction_log_feedback", []),
+            "soft_skill_summary": soft_skill_summary or {},
+            "big5_profile": big5_profile or {},
+        }
+        
+        # Save based on interview type
+        if django_interview_type == "Technical Interview":
+            technical_data = {
+                **common_data,
+                "language_score": feedback_data.get("language_score", 0),
+                "framework_score": feedback_data.get("framework_score", 0),
+                "algorithms_score": feedback_data.get("algorithms_score", 0),
+                "data_structures_score": feedback_data.get("data_structures_score", 0),
+                "approach_score": feedback_data.get("approach_score", 0),
+                "optimization_score": feedback_data.get("optimization_score", 0),
+                "debugging_score": feedback_data.get("debugging_score", 0),
+                "syntax_score": feedback_data.get("syntax_score", 0),
+            }
+            feedback, created = TechnicalFeedback.objects.update_or_create(
+                session_id=session_id,
+                user=user,
+                defaults=technical_data
+            )
+            logger.info(f"Technical feedback {'created' if created else 'updated'} in database: session_id={session_id}")
+            
+        elif django_interview_type == "HR Interview":
+            hr_data = {
+                **common_data,
+                "clarity_score": feedback_data.get("clarity_score", 0),
+                "confidence_score": feedback_data.get("confidence_score", 0),
+                "structure_score": feedback_data.get("structure_score", 0),
+                "engagement_score": feedback_data.get("engagement_score", 0),
+                "values_score": feedback_data.get("values_score", 0),
+                "teamwork_score": feedback_data.get("teamwork_score", 0),
+                "growth_score": feedback_data.get("growth_score", 0),
+                "initiative_score": feedback_data.get("initiative_score", 0),
+            }
+            feedback, created = HRFeedback.objects.update_or_create(
+                session_id=session_id,
+                user=user,
+                defaults=hr_data
+            )
+            logger.info(f"HR feedback {'created' if created else 'updated'} in database: session_id={session_id}")
+            
+        elif django_interview_type == "Case Study Interview":
+            case_study_data = {
+                **common_data,
+                "problem_understanding_score": feedback_data.get("problem_understanding_score", 0),
+                "hypothesis_score": feedback_data.get("hypothesis_score", 0),
+                "analysis_score": feedback_data.get("analysis_score", 0),
+                "synthesis_score": feedback_data.get("synthesis_score", 0),
+                "business_judgment_score": feedback_data.get("business_judgment_score", 0),
+                "creativity_score": feedback_data.get("creativity_score", 0),
+                "decision_making_score": feedback_data.get("decision_making_score", 0),
+                "impact_orientation_score": feedback_data.get("impact_orientation_score", 0),
+            }
+            feedback, created = CaseStudyFeedback.objects.update_or_create(
+                session_id=session_id,
+                user=user,
+                defaults=case_study_data
+            )
+            logger.info(f"Case study feedback {'created' if created else 'updated'} in database: session_id={session_id}")
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving feedback to database: {e}", exc_info=True)
         return False
