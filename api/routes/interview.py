@@ -3,7 +3,7 @@ Interview API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import logging
 import asyncio
 import json
@@ -89,10 +89,10 @@ async def get_start_interview_status(
 ):
     """
     Poll status of the start interview task returned from POST /start.
-    Returns task state and progress: queued, processing (with % and message), completed, or failed.
+    Returns task state, progress, and when completed the same interview snapshot as respond-status
+    (interview_status, interview_ai_response with audio, transcript, warning) so clients need no SSE.
     """
     try:
-    
         task_result = AsyncResult(task_id, app=celery_app)
         state_mapping = {
             "PENDING": "queued",
@@ -113,7 +113,7 @@ async def get_start_interview_status(
             progress = 100
             message = "Ready"
         session_id = None
-        result = None
+        result: Optional[Dict[str, Any]] = None
         error = None
         if task_result.state == "SUCCESS":
             task_data = task_result.result
@@ -126,6 +126,61 @@ async def get_start_interview_status(
                 }
         elif task_result.state == "FAILURE":
             error = str(task_result.info) if task_result.info else "Task failed"
+
+        # Session-level snapshot (same as respond-status) when we have session_id
+        interview_status: Optional[str] = None
+        interview_ai_response: Optional[Dict[str, Any]] = None
+        interview_transcript: Optional[str] = None
+        interview_is_complete: Optional[bool] = None
+        interview_warning: Optional[Dict[str, Any]] = None
+
+        if session_id:
+            try:
+                session_manager = InterviewSessionManager(redis_client)
+                session = session_manager.get_session(session_id)
+                if session and session.get("user_id") == user_info["uid"]:
+                    current_status = session_manager.get_status(session_id) or "waiting_for_response"
+                    processing_key = f"session:{session_id}:processing"
+                    if redis_client.get(processing_key):
+                        current_status = "processing"
+                    interview_status = current_status
+
+                    response_data = session_manager.get_response(session_id)
+                    if not response_data and task_result.state == "SUCCESS" and result and result.get("message"):
+                        await asyncio.sleep(0.4)
+                        response_data = session_manager.get_response(session_id)
+                    if response_data:
+                        interview_ai_response = {
+                            "message": response_data.get("message"),
+                            "audio": response_data.get("audio"),
+                            "audio_base64": response_data.get("audio"),
+                            "last_node": response_data.get("last_node"),
+                            "timestamp": response_data.get("timestamp"),
+                            "question_number": None,
+                            "total_questions": None,
+                        }
+                        interview_status = "ai_responded"
+                    elif task_result.state == "SUCCESS" and result and result.get("message"):
+                        interview_ai_response = {
+                            "message": result.get("message"),
+                            "audio": None,
+                            "audio_base64": None,
+                            "last_node": result.get("last_node"),
+                            "timestamp": None,
+                            "question_number": None,
+                            "total_questions": None,
+                        }
+                        interview_status = "ai_responded"
+
+                    interview_transcript = session_manager.get_transcript(session_id)
+                    interview_is_complete = current_status == "completed"
+                    interview_warning = session_manager.get_warning(session_id)
+            except Exception as e:
+                logger.warning(
+                    f"Error building interview snapshot in start-status for session {session_id}: {e}",
+                    exc_info=True,
+                )
+
         return InterviewStartStatusResponse(
             task_id=task_id,
             session_id=session_id,
@@ -134,6 +189,11 @@ async def get_start_interview_status(
             message=message,
             result=result,
             error=error,
+            interview_status=interview_status,
+            interview_ai_response=interview_ai_response,
+            interview_transcript=interview_transcript,
+            interview_is_complete=interview_is_complete,
+            interview_warning=interview_warning,
         )
     except HTTPException:
         raise
@@ -183,6 +243,7 @@ async def submit_response(
         # Check if there's already a processing task (prevent audio queue buildup)
         processing_key = f"session:{session_id}:processing"
         is_processing = redis_client.get(processing_key)
+
         if is_processing:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -370,6 +431,7 @@ async def get_respond_task_status(
                 detail="Not authorized to access this session",
             )
 
+        # Task-level status (Celery)
         task_result = AsyncResult(task_id, app=celery_app)
         state_mapping = {
             "PENDING": "queued",
@@ -382,8 +444,8 @@ async def get_respond_task_status(
         if task_result.state == "PROGRESS":
             status_str = "processing"
 
-        result = None
-        error = None
+        result: Optional[Dict[str, Any]] = None
+        error: Optional[str] = None
         if task_result.state == "SUCCESS":
             task_data = task_result.result
             if isinstance(task_data, dict):
@@ -395,12 +457,77 @@ async def get_respond_task_status(
         elif task_result.state == "FAILURE":
             error = str(task_result.info) if task_result.info else "Task failed"
 
+        # Session-level snapshot (mirror of get_interview_status + SSE payload)
+        interview_status: Optional[str] = None
+        interview_ai_response: Optional[Dict[str, Any]] = None
+        interview_transcript: Optional[str] = None
+        interview_is_complete: Optional[bool] = None
+        interview_warning: Optional[Dict[str, Any]] = None
+
+        try:
+            # Current interview status
+            current_status = session_manager.get_status(session_id) or "waiting_for_response"
+            processing_key = f"session:{session_id}:processing"
+            if redis_client.get(processing_key):
+                current_status = "processing"
+            interview_status = current_status
+
+            # AI response: prefer session store (has audio). If task just completed but store
+            # is empty (race or status reset), retry once after a short delay then fall back to task result.
+            response_data = session_manager.get_response(session_id)
+            if not response_data and task_result.state == "SUCCESS" and result and result.get("message"):
+                await asyncio.sleep(0.4)
+                response_data = session_manager.get_response(session_id)
+            if response_data:
+                interview_ai_response = {
+                    "message": response_data.get("message"),
+                    "audio": response_data.get("audio"),
+                    "audio_base64": response_data.get("audio"),
+                    "last_node": response_data.get("last_node"),
+                    "timestamp": response_data.get("timestamp"),
+                    "question_number": None,
+                    "total_questions": None,
+                }
+                interview_status = "ai_responded"
+            elif task_result.state == "SUCCESS" and result and result.get("message"):
+                # Task completed with AI response but session store empty (race or consumed)
+                interview_ai_response = {
+                    "message": result.get("message"),
+                    "audio": None,
+                    "audio_base64": None,
+                    "last_node": result.get("last_node"),
+                    "timestamp": None,
+                    "question_number": None,
+                    "total_questions": None,
+                }
+                interview_status = "ai_responded"
+
+            # Latest transcript
+            interview_transcript = session_manager.get_transcript(session_id)
+
+            # Completion flag
+            interview_is_complete = current_status == "completed"
+
+            # Video quality / termination warning if any
+            interview_warning = session_manager.get_warning(session_id)
+        except Exception as e:
+            # Don't fail the endpoint if the snapshot fails; log and continue with task status.
+            logger.warning(
+                f"Error building interview snapshot in respond-status for session {session_id}: {e}",
+                exc_info=True,
+            )
+
         return RespondTaskStatusResponse(
             task_id=task_id,
             session_id=session_id,
             status=status_str,
             result=result,
             error=error,
+            interview_status=interview_status,
+            interview_ai_response=interview_ai_response,
+            interview_transcript=interview_transcript,
+            interview_is_complete=interview_is_complete,
+            interview_warning=interview_warning,
         )
     except HTTPException:
         raise

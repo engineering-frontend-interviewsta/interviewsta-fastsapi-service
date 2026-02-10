@@ -11,11 +11,11 @@ import os
 from datetime import datetime, timedelta
 
 from services.interview_session import InterviewSessionManager
-from workflows.technical import get_technical_graph, TechnicalInterviewState
-from workflows.hr import get_hr_graph, HRInterviewState  
-from workflows.coding import get_graph, CompanyInterviewState, SubjectInterviewState
-from workflows.case_study import build_case_study_graph, CaseStudyInterviewState
-from langgraph.checkpoint.redis import RedisSaver
+from services.interview_agent import get_interview_agent
+from workflows.technical import TechnicalInterviewState
+from workflows.hr import HRInterviewState
+from workflows.coding import CompanyInterviewState, SubjectInterviewState
+from workflows.case_study import CaseStudyInterviewState
 from langchain_core.messages import HumanMessage
 from services.audio_processor import AudioProcessor
 
@@ -92,37 +92,17 @@ def process_interview_start(self, session_id: str, interview_type: str, user_id:
         self.session_manager.create_session(session_id, interview_type, user_id, payload)
         self.session_manager.set_status(session_id, "processing")
         logger.info(f"Session {session_id} created and marked as processing")
-        
-        # Get API keys
-        google_key = os.getenv("GOOGLE_API_KEY", "")
-        tavily_key = os.getenv("TAVILY_API_KEY", "")
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-        
-        # Setup checkpointer
-        redis_cm = RedisSaver.from_conn_string(redis_url)
-        checkpointer = redis_cm.__enter__()
-        
-        # Setup indexes (ignore if already exist)
-        try:
-            checkpointer.setup()
-        except Exception as e:
-            # Index already exists, which is fine
-            if "already exists" not in str(e).lower():
-                raise
-        
-        # Config for LangGraph
-        config = {"configurable": {"thread_id": session_id}}
-        
-        # Build workflow based on interview type
-        workflow = None
+
+        # Singleton interview agent (shared checkpointer, one graph per type)
+        agent = get_interview_agent()
+        workflow = agent.get_graph(interview_type)
+        config = agent.config_for_session(session_id)
+        interrupt_nodes = agent.get_interrupt_nodes(interview_type)
+
+        self.update_state(state="PROGRESS", meta={"progress": 50, "message": "Workflow compiled, initializing state..."})
+
         initial_state = None
-        interrupt_nodes = []
-        
         if interview_type == "Technical":
-            workflow = get_technical_graph(google_key, tavily_key, checkpointer)
-
-            self.update_state(state="PROGRESS", meta={"progress": 50, "message": "Workflow compiled, initializing state..."})
-
             initial_state = TechnicalInterviewState(
                 LastNode="default",
                 resume=payload.get("resume", ""),
@@ -130,25 +110,13 @@ def process_interview_start(self, session_id: str, interview_type: str, user_id:
                 TechnicalResearch=payload.get("TechnicalResearch", ""),
                 CodingResearch=payload.get("CodingResearch", "")
             )
-            interrupt_nodes = ["Greeting_after", "Technical_after", "Coding_after", "Project_after"]
-            
         elif interview_type == "HR":
-            workflow = get_hr_graph(google_key, tavily_key, checkpointer)
-
-            self.update_state(state="PROGRESS", meta={"progress": 50, "message": "Workflow compiled, initializing state..."})
-
             initial_state = HRInterviewState(
                 LastNode="default",
                 resume=payload.get("resume", ""),
                 history=""
             )
-            interrupt_nodes = ["Greeting_after", "HR_after"]
-            
         elif interview_type in ["Company", "Subject"]:
-            workflow = get_graph(interview_type, google_key, tavily_key, checkpointer)
-            
-            self.update_state(state="PROGRESS", meta={"progress": 50, "message": "Workflow compiled, initializing state..."})
-
             if interview_type == "Company":
                 initial_state = CompanyInterviewState(
                     LastNode="default",
@@ -167,13 +135,7 @@ def process_interview_start(self, session_id: str, interview_type: str, user_id:
                     Difficulty=payload.get("Difficulty", "Medium"),
                     Tags=payload.get("Tags", [])
                 )
-            interrupt_nodes = ["Greeting_after", "Coding_after"]
-            
         elif interview_type == "CaseStudy":
-            workflow = build_case_study_graph(google_key, checkpointer)
-
-            self.update_state(state="PROGRESS", meta={"progress": 50, "message": "Workflow compiled, initializing state..."})
-
             initial_state = CaseStudyInterviewState(
                 LastNode="",
                 messages=[],
@@ -183,12 +145,11 @@ def process_interview_start(self, session_id: str, interview_type: str, user_id:
                 current_case_reference="",
                 case_completed=False
             )
-            interrupt_nodes = ["Greeting_after", "CaseStudy_after"]
-        
-        if not workflow:
+
+        if initial_state is None:
             raise ValueError(f"Invalid interview type: {interview_type}")
-        
-        # Invoke workflow
+
+        # Invoke workflow (state per session via thread_id in config)
         response = workflow.invoke(initial_state, config=config, interrupt_before=interrupt_nodes)
         
         self.update_state(state="PROGRESS", meta={"progress": 90, "message": "Workflow invoked, extracting message..."})
@@ -258,35 +219,13 @@ def process_user_response(self, session_id: str, human_input: str) -> Dict[str, 
             raise ValueError(f"Session {session_id} not found")
         
         self.session_manager.set_status(session_id, "processing")
-        
-        # Get workflow configuration
+
         interview_type = session["interview_type"]
-        google_key = os.getenv("GOOGLE_API_KEY", "")
-        tavily_key = os.getenv("TAVILY_API_KEY", "")
-        redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
-        
-        # Setup checkpointer
-        redis_cm = RedisSaver.from_conn_string(redis_url)
-        checkpointer = redis_cm.__enter__()
-        config = {"configurable": {"thread_id": session_id}}
-        
-        # Rebuild workflow
-        workflow = None
-        interrupt_nodes = []
-        
-        if interview_type == "Technical":
-            workflow = get_technical_graph(google_key, tavily_key, checkpointer)
-            interrupt_nodes = ["Greeting_after", "Technical_after", "Coding_after", "Project_after"]
-        elif interview_type == "HR":
-            workflow = get_hr_graph(google_key, tavily_key, checkpointer)
-            interrupt_nodes = ["Greeting_after", "HR_after"]
-        elif interview_type in ["Company", "Subject"]:
-            workflow = get_graph(interview_type, google_key, tavily_key, checkpointer)
-            interrupt_nodes = ["Greeting_after", "Coding_after"]
-        elif interview_type == "CaseStudy":
-            workflow = build_case_study_graph(google_key, checkpointer)
-            interrupt_nodes = ["Greeting_after", "CaseStudy_after"]
-        
+        agent = get_interview_agent()
+        workflow = agent.get_graph(interview_type)
+        config = agent.config_for_session(session_id)
+        interrupt_nodes = agent.get_interrupt_nodes(interview_type)
+
         # Get current state and update with user input
         current_state = workflow.get_state(config)
         

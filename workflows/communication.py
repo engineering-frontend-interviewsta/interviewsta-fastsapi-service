@@ -2,7 +2,7 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field, field_validator, ConfigDict
+from pydantic import BaseModel, Field, field_validator, ConfigDict, StringConstraints
 from typing import Annotated, Literal, List, Callable, TypeVar
 from langgraph.checkpoint.memory import InMemorySaver
 # from pydantic import field_validator, Field,
@@ -130,32 +130,48 @@ Politely but firmly end the interview.
 from pydantic import BaseModel, Field, conlist, constr
 from typing import Optional, List
 
+
+# StrictString = Annotated[str, StringConstraints(min_length=1)]
+
 class DictationEntity(BaseModel):
-  instruction: Optional[constr(min_length=1)] = Field(None, description="The instruction to be followed during dictation.")
-  paragraph: Optional[constr(min_length=1)] = Field(None, description="The 30 words paragraph to be dictated.")
+    # Option A: Use Field arguments (Simplest/Recommended)
+    instruction: Optional[str] = Field(None, min_length=1, description="The instruction to be followed.")
+    paragraph: Optional[str] = Field(None, min_length=1, description="The 30 words paragraph.")
+
+class UserProfile(BaseModel):
+    # Option B: Use the StrictString Annotated type
+    name: Optional[str] = Field(None, description="Name of the interviewee.")
+    hobby: Optional[str] = Field(None, description="A hobby or interest.")
+    fun_facts: Optional[str] = Field(None, description="Interesting facts.")
+    last_chat: Optional[str] = Field(None, description="Summary of current chat.")
+    summary_of_previous_chats: Optional[str] = Field(None, description="Overall summary.")
+
+# class DictationEntity(BaseModel):
+#   instruction: Optional[constr(min_length=1)] = Field(None, description="The instruction to be followed during dictation.")
+#   paragraph: Optional[constr(min_length=1)] = Field(None, description="The 30 words paragraph to be dictated.")
 
 class WritingComprehensionEntity(BaseModel):
-  instruction: Optional[constr(min_length=1)] = Field(None, description="The instruction to be followed during writing comprehension.")
-  question: Optional[constr(min_length=1)] = Field(None, description="The question on which comprehension needs to be written.")
+  instruction: Optional[str] = Field(None, description="The instruction to be followed during writing comprehension.")
+  question: Optional[str] = Field(None, description="The question on which comprehension needs to be written.")
 
 class MCQEntity(BaseModel):
-  instruction: Optional[constr(min_length=1)] = Field(None, description="The instruction to be followed during solving MCQ.")
-  question: Optional[constr(min_length=1)] = Field(None, description="Fill in the blank question to be asked.")
+  instruction: Optional[str] = Field(None, description="The instruction to be followed during solving MCQ.")
+  question: Optional[str] = Field(None, description="Fill in the blank question to be asked.")
   options: Optional[Annotated[List[str], Field(min_length=4, max_length=4)]] = Field(
         None, description="EXACTLY 4 Options to choose from."
     )
-  answer: Optional[constr(min_length=1)] = Field(None, description="Correct answer to the question STRICTLY from options.")
+  answer: Optional[str] = Field(None, description="Correct answer to the question STRICTLY from options.")
 
-class UserProfile(BaseModel):
-    '''
-      Based on the interaction history with the interviewee and previous snaphot of `UserProfile`, you may need to look to update the current 
-      status of `UserProfile`, if no updates then return the fields as is in the original.
-    '''
-    name: Optional[constr(min_length=1)] = Field(None, description="Name of the interviewee.")
-    hobby: Optional[constr(min_length=1)] = Field(None, description="A hobby or interest of the interviewee.")
-    fun_facts: Optional[constr(min_length=1)] = Field(None, description="List of interesting facts about the interviewee.")
-    last_chat: Optional[constr(min_length=1)] = Field(None, description="Summary of current chat topics or key points which becomes as last chat for next session.")
-    summary_of_previous_chats: Optional[constr(min_length=1)] = Field(None, description="An overall summary of the interviewee's past interactions including current")
+# class UserProfile(BaseModel):
+#     '''
+#       Based on the interaction history with the interviewee and previous snaphot of `UserProfile`, you may need to look to update the current 
+#       status of `UserProfile`, if no updates then return the fields as is in the original.
+#     '''
+#     name: Optional[constr(min_length=1)] = Field(None, description="Name of the interviewee.")
+#     hobby: Optional[constr(min_length=1)] = Field(None, description="A hobby or interest of the interviewee.")
+#     fun_facts: Optional[constr(min_length=1)] = Field(None, description="List of interesting facts about the interviewee.")
+#     last_chat: Optional[constr(min_length=1)] = Field(None, description="Summary of current chat topics or key points which becomes as last chat for next session.")
+#     summary_of_previous_chats: Optional[constr(min_length=1)] = Field(None, description="An overall summary of the interviewee's past interactions including current")
 
 # print("UserProfile schema created successfully.")
 
@@ -366,7 +382,7 @@ def create_dictation_node(llm) -> Callable:
 def create_dictation_before_node(llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
     Rapport_llm = llm.with_structured_output(UserProfile)
-    response = Rapport_llm.invoke(f"Given the interaction history - {state["history"]} and previous snapshot of UserProfile - {state["user_profile"].model_dump_json()}")
+    response = Rapport_llm.invoke(f"Given the interaction history - {state['history']} and previous snapshot of UserProfile - {state['user_profile'].model_dump_json()}")
     state["user_profile"] = response
     return state
   return _Node
