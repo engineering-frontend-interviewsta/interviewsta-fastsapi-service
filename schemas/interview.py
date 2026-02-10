@@ -89,6 +89,15 @@ class RespondTaskStatusResponse(BaseModel):
     status: Literal["queued", "processing", "completed", "failed"]
     result: Optional[Dict[str, Any]] = None  # When completed: message, last_node, status
     error: Optional[str] = None
+    # Expanded snapshot so clients can avoid SSE and separate status calls:
+    # Mirrors what /{session_id}/status and the SSE stream expose.
+    interview_status: Optional[
+        Literal["waiting_for_response", "processing", "ai_responded", "completed", "error"]
+    ] = None
+    interview_ai_response: Optional[Dict[str, Any]] = None  # Same shape as InterviewStatusResponse.ai_response
+    interview_transcript: Optional[str] = None
+    interview_is_complete: Optional[bool] = None
+    interview_warning: Optional[Dict[str, Any]] = None  # Video quality / termination warnings if any
 
 class InterviewStartStatusResponse(BaseModel):
     """Status of the start interview task (process_interview_start) for polling with progress."""
@@ -99,6 +108,14 @@ class InterviewStartStatusResponse(BaseModel):
     message: Optional[str] = None  # e.g. "Workflow compiled", "Getting first response"
     result: Optional[Dict[str, Any]] = None  # When completed: message, last_node, status
     error: Optional[str] = None
+    # Expanded snapshot (same as respond-status) when session_id is available
+    interview_status: Optional[
+        Literal["waiting_for_response", "processing", "ai_responded", "completed", "error"]
+    ] = None
+    interview_ai_response: Optional[Dict[str, Any]] = None
+    interview_transcript: Optional[str] = None
+    interview_is_complete: Optional[bool] = None
+    interview_warning: Optional[Dict[str, Any]] = None
 
 
 # Optional: if you want to type big5 keys (O,C,E,A,N or long names)

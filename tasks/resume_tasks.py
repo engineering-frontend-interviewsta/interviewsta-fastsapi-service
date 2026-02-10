@@ -10,7 +10,7 @@ from redis import Redis
 import base64
 import tempfile
 
-from workflows.feedback.resume_analysis import build_resume_analysis_graph, State
+from services.resume_agent import get_resume_agent
 from langchain_core.messages import HumanMessage
 import pytesseract
 from pdf2image import convert_from_bytes
@@ -154,10 +154,9 @@ def analyze_resume(
             meta={'progress': 30, 'status': 'Analyzing resume structure...'}
         )
         
-        # Build analysis graph
-        google_key = os.getenv("GOOGLE_API_KEY", "")
-        graph = build_resume_analysis_graph(google_key)
-        
+        # Singleton resume agent (no checkpointer)
+        graph = get_resume_agent().get_graph()
+
         # Prepare input
         input_message = HumanMessage(content=f"""
 Resume:
@@ -168,13 +167,13 @@ Job Description:
 
 Please analyze this resume against the job description.
 """)
-        
+
         # Update progress
         parent_task.update_state(
             state='PROGRESS',
             meta={'progress': 50, 'status': 'Running analysis...'}
         )
-        
+
         # Run analysis
         result = graph.invoke({
             "input_message": [input_message],
