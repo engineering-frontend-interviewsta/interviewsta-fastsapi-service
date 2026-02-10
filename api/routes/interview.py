@@ -54,11 +54,11 @@ async def start_interview(
         logger.info(f"Starting {request.interview_type} interview for user {user_info['uid']}")
         
         # Validate user matches
-        if request.user_id != user_info["uid"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="User ID mismatch"
-            )
+        # if request.user_id != user_info["uid"]:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_403_FORBIDDEN,
+        #         detail="User ID mismatch"
+        #     )
         
         # Queue Celery task
         task = process_interview_start.apply_async(
