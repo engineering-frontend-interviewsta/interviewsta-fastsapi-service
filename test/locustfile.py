@@ -1,9 +1,11 @@
 """
-Locust load test: resume analysis and start interview.
+Locust load test: resume analysis, start interview, and full interview (start + 4 respond cycles).
 Each flow submits, polls status, and marks success/failure from the actual task outcome.
 """
+import base64
 import json
 import os
+import pickle
 import time
 import uuid
 from locust import HttpUser, task, between
@@ -23,6 +25,10 @@ MAX_POLL_WAIT_SEC = 120
 
 # Start interview: user_id must match the Firebase token's uid
 INTERVIEW_USER_ID = os.getenv("INTERVIEW_USER_ID", "2CB2PJa1qKbRJHBygM9WDScz3X43")
+
+# Full interview: audio.pkl is a dict with keys 0,1,2,3 (4 interactions); values are audio bytes or base64 str
+AUDIO_PKL_PATH = os.getenv("AUDIO_PKL_PATH", os.path.join(os.path.dirname(__file__), "audio.pkl"))
+RESPOND_POLL_WAIT_SEC = 90  # per respond (transcribe + workflow)
 
 
 class ResumeAnalysisUser(HttpUser):
@@ -92,9 +98,11 @@ class ResumeAnalysisUser(HttpUser):
                     return
 
                 last_status = status_body.get("status")
-                if last_status == "completed" and status_body.get("interview_ai_response") is None:
-                    resp.failure("status=completed but interview_ai_response is null")
-                    return  
+                if last_status == "completed":
+                    result = status_body.get("result")
+                    if result is None:
+                        resp.failure("status=completed but result is null")
+                    return
                 if last_status == "failed":
                     error = status_body.get("error") or "Unknown error"
                     resp.failure(f"Task failed: {error}")
@@ -176,4 +184,164 @@ class ResumeAnalysisUser(HttpUser):
             catch_response=True,
         ) as resp:
             resp.failure(f"Timeout waiting for start completion (last status={last_status})")
+
+
+def _load_audio_pkl(path: str):
+    """Load audio.pkl; return dict of key -> base64 audio str, or None if missing/invalid."""
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    required = {0, 1, 2, 3}
+    if not required.issubset(data.keys()):
+        return None
+    out = {}
+    for k in required:
+        v = data[k]
+        if isinstance(v, bytes):
+            out[k] = base64.b64encode(v).decode("utf-8")
+        elif isinstance(v, str):
+            out[k] = v
+        else:
+            return None
+    return out
+
+
+class FullInterviewUser(HttpUser):
+    """
+    Simulate a full interview: start session, then send 4 audio responses (0,1,2,3 from audio.pkl)
+    and poll respond-status after each until completed.
+    """
+    wait_time = between(1, 3)
+    host = "https://interview-service-api.onrender.com"
+
+    def on_start(self):
+        self.client.headers.update({"Authorization": f"Bearer {FIREBASE_ID_TOKEN}"})
+        self.audio_clips = _load_audio_pkl(AUDIO_PKL_PATH)
+
+    @task(1)
+    def run_full_interview(self):
+        """Start interview, then submit audio 0,1,2,3 in order; poll respond-status after each."""
+        if not self.audio_clips:
+            return  # skip if audio.pkl missing or invalid
+
+        session_id = f"locust_full_{uuid.uuid4().hex[:12]}"
+        start_payload = {
+            "interview_type": "Technical",
+            "session_id": session_id,
+            "user_id": INTERVIEW_USER_ID,
+            "payload": {
+                "resume": "Locust full-interview candidate.",
+                "TechnicalResearch": "Backend, REST APIs",
+                "CodingResearch": "Python, LangGraph",
+            },
+        }
+
+        # 1) Start interview
+        with self.client.post(
+            "/api/v1/interview/start",
+            json=start_payload,
+            name="POST /interview/start (full)",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                response.failure(f"Start returned {response.status_code}: {response.text}")
+                return
+            try:
+                body = response.json()
+            except Exception as e:
+                response.failure(f"Invalid JSON: {e}")
+                return
+            task_id = body.get("task_id")
+            if not task_id:
+                response.failure("Response missing task_id")
+                return
+
+        # Poll start-status until completed
+        status_url = f"/api/v1/interview/start-status/{task_id}"
+        deadline = time.time() + MAX_POLL_WAIT_SEC
+        while time.time() < deadline:
+            with self.client.get(
+                status_url,
+                name="GET /interview/start-status/{task_id} (full)",
+                catch_response=True,
+            ) as resp:
+                if resp.status_code != 200:
+                    resp.failure(f"Start status {resp.status_code}: {resp.text}")
+                    return
+                try:
+                    status_body = resp.json()
+                except Exception as e:
+                    resp.failure(f"Start status invalid JSON: {e}")
+                    return
+                if status_body.get("status") == "completed":
+                    break
+                if status_body.get("status") == "failed":
+                    resp.failure(f"Start failed: {status_body.get('error', 'Unknown')}")
+                    return
+            time.sleep(POLL_INTERVAL_SEC)
+        else:
+            with self.client.get(status_url, name="GET /interview/start-status (timeout)", catch_response=True) as r:
+                r.failure("Timeout waiting for start")
+            return
+
+        # 2) Submit each of 4 audio responses and poll respond-status
+        for i in range(4):
+            audio_b64 = self.audio_clips.get(i)
+            if not audio_b64:
+                continue
+            with self.client.post(
+                f"/api/v1/interview/{session_id}/respond",
+                json={"audio_data": audio_b64},
+                name=f"POST /interview/{{session_id}}/respond (i={i})",
+                catch_response=True,
+            ) as response:
+                if response.status_code != 200:
+                    response.failure(f"Respond {i} returned {response.status_code}: {response.text}")
+                    return
+                try:
+                    body = response.json()
+                except Exception as e:
+                    response.failure(f"Respond {i} invalid JSON: {e}")
+                    return
+                respond_task_id = body.get("task_id")
+                if not respond_task_id:
+                    response.failure(f"Respond {i} missing task_id")
+                    return
+
+            respond_status_url = f"/api/v1/interview/{session_id}/respond-status/{respond_task_id}"
+            deadline_respond = time.time() + RESPOND_POLL_WAIT_SEC
+            while time.time() < deadline_respond:
+                with self.client.get(
+                    respond_status_url,
+                    name=f"GET /interview/{{session_id}}/respond-status (i={i})",
+                    catch_response=True,
+                ) as resp:
+                    if resp.status_code != 200:
+                        resp.failure(f"Respond status {i} returned {resp.status_code}: {resp.text}")
+                        return
+                    try:
+                        status_body = resp.json()
+                    except Exception as e:
+                        resp.failure(f"Respond status {i} invalid JSON: {e}")
+                        return
+                    if status_body.get("status") == "completed":
+                        break
+                    if status_body.get("status") == "failed":
+                        resp.failure(f"Respond {i} failed: {status_body.get('error', 'Unknown')}")
+                        return
+                time.sleep(POLL_INTERVAL_SEC)
+            else:
+                with self.client.get(
+                    respond_status_url,
+                    name="GET /respond-status (timeout)",
+                    catch_response=True,
+                ) as r:
+                    r.failure(f"Timeout waiting for respond {i}")
+                return
 
