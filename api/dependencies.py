@@ -1,6 +1,7 @@
 """
 FastAPI dependencies for authentication, database, Redis, etc.
 """
+import asyncio
 from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from redis import Redis
@@ -62,38 +63,21 @@ def get_redis() -> Redis:
     return _redis_client
 
 
+def _verify_id_token_sync(token: str):
+    """Blocking Firebase token verification. Run in thread to avoid starving the event loop."""
+    return auth.verify_id_token(token)
+
+
 async def verify_firebase_token(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> dict:
     """
-    Verify Firebase ID token and return user info
-    
-    Args:
-        credentials: Bearer token from Authorization header
-        
-    Returns:
-        dict: User information from Firebase token
-        
-    Raises:
-        HTTPException: If token is invalid or expired
+    Verify Firebase ID token and return user info.
+    Verification runs in a thread pool so the event loop stays free under load.
     """
     token = credentials.credentials
-    
     try:
-        # Verify the token
-        decoded_token = auth.verify_id_token(token)
-        
-        # Extract user info
-        user_info = {
-            "uid": decoded_token["uid"],
-            "email": decoded_token.get("email"),
-            "email_verified": decoded_token.get("email_verified", False),
-            "name": decoded_token.get("name"),
-            "picture": decoded_token.get("picture"),
-        }
-        
-        return user_info
-        
+        decoded_token = await asyncio.to_thread(_verify_id_token_sync, token)
     except auth.InvalidIdTokenError:
         logger.warning("Invalid Firebase token")
         raise HTTPException(
@@ -115,6 +99,15 @@ async def verify_firebase_token(
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+    user_info = {
+        "uid": decoded_token["uid"],
+        "email": decoded_token.get("email"),
+        "email_verified": decoded_token.get("email_verified", False),
+        "name": decoded_token.get("name"),
+        "picture": decoded_token.get("picture"),
+    }
+    return user_info
 
 
 async def get_current_user(user_info: dict = Depends(verify_firebase_token)) -> dict:
