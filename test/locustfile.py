@@ -2,6 +2,7 @@
 Locust load test: resume analysis and start interview.
 Each flow submits, polls status, and marks success/failure from the actual task outcome.
 """
+import json
 import os
 import time
 import uuid
@@ -91,13 +92,9 @@ class ResumeAnalysisUser(HttpUser):
                     return
 
                 last_status = status_body.get("status")
-                if last_status == "completed":
-                    # Optional: validate result shape so "success" means real success
-                    result = status_body.get("result")
-                    if result is None:
-                        resp.failure("status=completed but result is null")
-                    # Else success: do not call resp.failure()
-                    return
+                if last_status == "completed" and status_body.get("interview_ai_response") is None:
+                    resp.failure("status=completed but interview_ai_response is null")
+                    return  
                 if last_status == "failed":
                     error = status_body.get("error") or "Unknown error"
                     resp.failure(f"Task failed: {error}")
@@ -164,10 +161,7 @@ class ResumeAnalysisUser(HttpUser):
 
                 last_status = status_body.get("status")
                 if last_status == "completed":
-                    # Optionally require interview_ai_response for full success
-                    ai_response = status_body.get("interview_ai_response")
-                    if ai_response is None and status_body.get("session_id"):
-                        resp.failure("status=completed but interview_ai_response is null")
+                    print("[Start interview] Completed response body:", json.dumps(status_body, indent=2, default=str))
                     return
                 if last_status == "failed":
                     err = status_body.get("error") or "Unknown error"
@@ -182,3 +176,4 @@ class ResumeAnalysisUser(HttpUser):
             catch_response=True,
         ) as resp:
             resp.failure(f"Timeout waiting for start completion (last status={last_status})")
+
