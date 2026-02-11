@@ -234,11 +234,11 @@ async def submit_response(
                 detail="Session not found"
             )
         
-        if session["user_id"] != user_info["uid"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to access this session"
-            )
+        # if session["user_id"] != user_info["uid"]:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_403_FORBIDDEN,
+        #         detail="Not authorized to access this session"
+        #     )
         
         # Check if there's already a processing task (prevent audio queue buildup)
         processing_key = f"session:{session_id}:processing"
@@ -425,11 +425,11 @@ async def get_respond_task_status(
     try:
         session_manager = InterviewSessionManager(redis_client)
         session = session_manager.get_session(session_id)
-        if not session or session["user_id"] != user_info["uid"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to access this session",
-            )
+        # if not session or session["user_id"] != user_info["uid"]:
+        #     raise HTTPException(
+        #         status_code=status.HTTP_403_FORBIDDEN,
+        #         detail="Not authorized to access this session",
+        #     )
 
         # Task-level status (Celery)
         task_result = AsyncResult(task_id, app=celery_app)
