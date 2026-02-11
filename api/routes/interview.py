@@ -1,9 +1,12 @@
 """
 Interview API endpoints
+
+All blocking I/O (Redis, Celery AsyncResult) is run off the event loop via run_sync()
+to keep the event loop free and avoid 502s / health-check timeouts under load.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 import logging
 import asyncio
 import json
@@ -34,6 +37,288 @@ from schemas.feedback import FeedbackStatusResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _run_sync(sync_fn, *args, **kwargs):
+    """Run blocking sync work in the default thread pool so the event loop stays free."""
+    return await asyncio.to_thread(sync_fn, *args, **kwargs)
+
+
+def _get_start_status_data_sync(task_id: str, redis_client: Redis, user_uid: str) -> Dict[str, Any]:
+    """Blocking: Celery AsyncResult + Redis/session snapshot. Run in thread."""
+    task_result = AsyncResult(task_id, app=celery_app)
+    state_mapping = {
+        "PENDING": "queued",
+        "STARTED": "processing",
+        "RETRY": "processing",
+        "SUCCESS": "completed",
+        "FAILURE": "failed",
+    }
+    status_str = state_mapping.get(task_result.state, "processing")
+    progress = 0
+    message = None
+    if task_result.state == "PROGRESS":
+        meta = task_result.info or {}
+        progress = meta.get("progress", 0)
+        message = meta.get("message")
+        status_str = "processing"
+    elif task_result.state == "SUCCESS":
+        progress = 100
+        message = "Ready"
+    session_id = None
+    result = None
+    error = None
+    if task_result.state == "SUCCESS":
+        task_data = task_result.result
+        if isinstance(task_data, dict):
+            session_id = task_data.get("session_id")
+            result = {
+                "status": task_data.get("status"),
+                "message": task_data.get("message"),
+                "last_node": task_data.get("last_node"),
+            }
+    elif task_result.state == "FAILURE":
+        error = str(task_result.info) if task_result.info else "Task failed"
+
+    interview_status = None
+    interview_ai_response = None
+    interview_transcript = None
+    interview_is_complete = None
+    interview_warning = None
+
+    if session_id:
+        try:
+            session_manager = InterviewSessionManager(redis_client)
+            session = session_manager.get_session(session_id)
+            if session and session.get("user_id") == user_uid:
+                current_status = session_manager.get_status(session_id) or "waiting_for_response"
+                processing_key = f"session:{session_id}:processing"
+                if redis_client.get(processing_key):
+                    current_status = "processing"
+                interview_status = current_status
+                response_data = session_manager.get_response(session_id)
+                if not response_data and task_result.state == "SUCCESS" and result and result.get("message"):
+                    import time
+                    time.sleep(0.4)
+                    response_data = session_manager.get_response(session_id)
+                if response_data:
+                    interview_ai_response = {
+                        "message": response_data.get("message"),
+                        "audio": response_data.get("audio"),
+                        "audio_base64": response_data.get("audio"),
+                        "last_node": response_data.get("last_node"),
+                        "timestamp": response_data.get("timestamp"),
+                        "question_number": None,
+                        "total_questions": None,
+                    }
+                    interview_status = "ai_responded"
+                elif task_result.state == "SUCCESS" and result and result.get("message"):
+                    interview_ai_response = {
+                        "message": result.get("message"),
+                        "audio": None,
+                        "audio_base64": None,
+                        "last_node": result.get("last_node"),
+                        "timestamp": None,
+                        "question_number": None,
+                        "total_questions": None,
+                    }
+                    interview_status = "ai_responded"
+                interview_transcript = session_manager.get_transcript(session_id)
+                interview_is_complete = current_status == "completed"
+                interview_warning = session_manager.get_warning(session_id)
+        except Exception as e:
+            logger.warning("Error building start-status snapshot for %s: %s", session_id, e)
+
+    return {
+        "task_id": task_id,
+        "session_id": session_id,
+        "status": status_str,
+        "progress": progress,
+        "message": message,
+        "result": result,
+        "error": error,
+        "interview_status": interview_status,
+        "interview_ai_response": interview_ai_response,
+        "interview_transcript": interview_transcript,
+        "interview_is_complete": interview_is_complete,
+        "interview_warning": interview_warning,
+    }
+
+
+def _submit_response_prepare_sync(
+    session_id: str,
+    redis_client: Redis,
+    audio_b64: Optional[str],
+    text_response: Optional[str],
+    transcribe_task: Any,
+    transcribe_timeout: int,
+) -> Dict[str, Any]:
+    """Blocking: get session, check/set processing flag, optional transcribe, set transcript. Run in thread."""
+    session_manager = InterviewSessionManager(redis_client)
+    session = session_manager.get_session(session_id)
+    if not session:
+        return {"error": {"code": 404, "detail": "Session not found"}}
+    processing_key = f"session:{session_id}:processing"
+    if redis_client.get(processing_key):
+        return {"error": {"code": 429, "detail": "Previous response is still being processed. Please wait."}}
+    redis_client.setex(processing_key, 15, "true")
+
+    human_input = text_response
+    if transcribe_task is not None:
+        try:
+            transcribe_result = transcribe_task.get(timeout=transcribe_timeout)
+        except Exception as e:
+            return {"error": {"code": 400, "detail": f"Transcription failed: {e}"}}
+        if transcribe_result.get("status") == "error":
+            return {"error": {"code": 400, "detail": transcribe_result.get("error", "Transcription failed")}}
+        human_input = transcribe_result.get("transcription") or ""
+        session_manager.set_transcript(session_id, human_input)
+
+    if not human_input:
+        return {"error": {"code": 400, "detail": "Either audio_data or text_response must be provided"}}
+    return {"human_input": human_input}
+
+
+def _get_respond_status_data_sync(
+    session_id: str, task_id: str, redis_client: Redis, user_uid: str
+) -> Dict[str, Any]:
+    """Blocking: session + Celery AsyncResult + Redis snapshot. Run in thread."""
+    import time
+    session_manager = InterviewSessionManager(redis_client)
+    session = session_manager.get_session(session_id)
+
+    task_result = AsyncResult(task_id, app=celery_app)
+    state_mapping = {
+        "PENDING": "queued",
+        "STARTED": "processing",
+        "RETRY": "processing",
+        "SUCCESS": "completed",
+        "FAILURE": "failed",
+    }
+    status_str = state_mapping.get(task_result.state, "processing")
+    if task_result.state == "PROGRESS":
+        status_str = "processing"
+    result = None
+    error = None
+    if task_result.state == "SUCCESS":
+        task_data = task_result.result
+        if isinstance(task_data, dict):
+            result = {
+                "status": task_data.get("status"),
+                "message": task_data.get("message"),
+                "last_node": task_data.get("last_node"),
+            }
+    elif task_result.state == "FAILURE":
+        error = str(task_result.info) if task_result.info else "Task failed"
+
+    interview_status = None
+    interview_ai_response = None
+    interview_transcript = None
+    interview_is_complete = None
+    interview_warning = None
+    try:
+        current_status = session_manager.get_status(session_id) or "waiting_for_response"
+        processing_key = f"session:{session_id}:processing"
+        if redis_client.get(processing_key):
+            current_status = "processing"
+        interview_status = current_status
+        response_data = session_manager.get_response(session_id)
+        if not response_data and task_result.state == "SUCCESS" and result and result.get("message"):
+            time.sleep(0.4)
+            response_data = session_manager.get_response(session_id)
+        if response_data:
+            interview_ai_response = {
+                "message": response_data.get("message"),
+                "audio": response_data.get("audio"),
+                "audio_base64": response_data.get("audio"),
+                "last_node": response_data.get("last_node"),
+                "timestamp": response_data.get("timestamp"),
+                "question_number": None,
+                "total_questions": None,
+            }
+            interview_status = "ai_responded"
+        elif task_result.state == "SUCCESS" and result and result.get("message"):
+            interview_ai_response = {
+                "message": result.get("message"),
+                "audio": None,
+                "audio_base64": None,
+                "last_node": result.get("last_node"),
+                "timestamp": None,
+                "question_number": None,
+                "total_questions": None,
+            }
+            interview_status = "ai_responded"
+        interview_transcript = session_manager.get_transcript(session_id)
+        interview_is_complete = current_status == "completed"
+        interview_warning = session_manager.get_warning(session_id)
+    except Exception as e:
+        logger.warning("Error building respond-status snapshot for %s: %s", session_id, e)
+
+    return {
+        "task_id": task_id,
+        "session_id": session_id,
+        "status": status_str,
+        "result": result,
+        "error": error,
+        "interview_status": interview_status,
+        "interview_ai_response": interview_ai_response,
+        "interview_transcript": interview_transcript,
+        "interview_is_complete": interview_is_complete,
+        "interview_warning": interview_warning,
+    }
+
+
+def _get_interview_status_data_sync(
+    session_id: str, redis_client: Redis, user_uid: str
+) -> Dict[str, Any]:
+    """Blocking: wait for session, then get status/response/transcript. Run in thread."""
+    import time
+    session_manager = InterviewSessionManager(redis_client)
+    max_wait = 12
+    wait_interval = 0.3
+    waited = 0.0
+    session = None
+    while waited < max_wait:
+        session = session_manager.get_session(session_id)
+        if session:
+            break
+        time.sleep(wait_interval)
+        waited += wait_interval
+    if not session:
+        return {"error": {"code": 404, "detail": "Session not found or not yet created"}}
+    if session.get("user_id") != user_uid:
+        return {"error": {"code": 403, "detail": "Not authorized to access this session"}}
+    current_status = session_manager.get_status(session_id) or "waiting_for_response"
+    processing_key = f"session:{session_id}:processing"
+    if redis_client.get(processing_key):
+        current_status = "processing"
+    response_data = None
+    ai_response_formatted = None
+    if current_status == "ai_responded":
+        response_data = session_manager.get_response(session_id)
+        if response_data:
+            ai_response_formatted = {
+                "message": response_data.get("message"),
+                "audio_base64": response_data.get("audio"),
+                "audio": response_data.get("audio"),
+                "question_number": None,
+                "total_questions": None,
+                "last_node": response_data.get("last_node"),
+            }
+    transcript = session_manager.get_transcript(session_id)
+    is_complete = current_status == "completed"
+    return {
+        "session_id": session_id,
+        "status": current_status,
+        "message": response_data.get("message") if response_data else None,
+        "audio": response_data.get("audio") if response_data else None,
+        "last_node": response_data.get("last_node") if response_data else session.get("last_node"),
+        "transcript": transcript,
+        "created_at": session.get("created_at"),
+        "updated_at": session.get("updated_at"),
+        "is_complete": is_complete,
+        "ai_response": ai_response_formatted,
+    }
 
 
 @router.post("/start", response_model=InterviewStartResponse)
@@ -93,108 +378,13 @@ async def get_start_interview_status(
     (interview_status, interview_ai_response with audio, transcript, warning) so clients need no SSE.
     """
     try:
-        task_result = AsyncResult(task_id, app=celery_app)
-        state_mapping = {
-            "PENDING": "queued",
-            "STARTED": "processing",
-            "RETRY": "processing",
-            "SUCCESS": "completed",
-            "FAILURE": "failed",
-        }
-        status_str = state_mapping.get(task_result.state, "processing")
-        progress = 0
-        message = None
-        if task_result.state == "PROGRESS":
-            meta = task_result.info or {}
-            progress = meta.get("progress", 0)
-            message = meta.get("message")
-            status_str = "processing"
-        elif task_result.state == "SUCCESS":
-            progress = 100
-            message = "Ready"
-        session_id = None
-        result: Optional[Dict[str, Any]] = None
-        error = None
-        if task_result.state == "SUCCESS":
-            task_data = task_result.result
-            if isinstance(task_data, dict):
-                session_id = task_data.get("session_id")
-                result = {
-                    "status": task_data.get("status"),
-                    "message": task_data.get("message"),
-                    "last_node": task_data.get("last_node"),
-                }
-        elif task_result.state == "FAILURE":
-            error = str(task_result.info) if task_result.info else "Task failed"
-
-        # Session-level snapshot (same as respond-status) when we have session_id
-        interview_status: Optional[str] = None
-        interview_ai_response: Optional[Dict[str, Any]] = None
-        interview_transcript: Optional[str] = None
-        interview_is_complete: Optional[bool] = None
-        interview_warning: Optional[Dict[str, Any]] = None
-
-        if session_id:
-            try:
-                session_manager = InterviewSessionManager(redis_client)
-                session = session_manager.get_session(session_id)
-                if session and session.get("user_id") == user_info["uid"]:
-                    current_status = session_manager.get_status(session_id) or "waiting_for_response"
-                    processing_key = f"session:{session_id}:processing"
-                    if redis_client.get(processing_key):
-                        current_status = "processing"
-                    interview_status = current_status
-
-                    response_data = session_manager.get_response(session_id)
-                    if not response_data and task_result.state == "SUCCESS" and result and result.get("message"):
-                        await asyncio.sleep(0.4)
-                        response_data = session_manager.get_response(session_id)
-                    if response_data:
-                        interview_ai_response = {
-                            "message": response_data.get("message"),
-                            "audio": response_data.get("audio"),
-                            "audio_base64": response_data.get("audio"),
-                            "last_node": response_data.get("last_node"),
-                            "timestamp": response_data.get("timestamp"),
-                            "question_number": None,
-                            "total_questions": None,
-                        }
-                        interview_status = "ai_responded"
-                    elif task_result.state == "SUCCESS" and result and result.get("message"):
-                        interview_ai_response = {
-                            "message": result.get("message"),
-                            "audio": None,
-                            "audio_base64": None,
-                            "last_node": result.get("last_node"),
-                            "timestamp": None,
-                            "question_number": None,
-                            "total_questions": None,
-                        }
-                        interview_status = "ai_responded"
-
-                    interview_transcript = session_manager.get_transcript(session_id)
-                    interview_is_complete = current_status == "completed"
-                    interview_warning = session_manager.get_warning(session_id)
-            except Exception as e:
-                logger.warning(
-                    f"Error building interview snapshot in start-status for session {session_id}: {e}",
-                    exc_info=True,
-                )
-
-        return InterviewStartStatusResponse(
-            task_id=task_id,
-            session_id=session_id,
-            status=status_str,
-            progress=progress,
-            message=message,
-            result=result,
-            error=error,
-            interview_status=interview_status,
-            interview_ai_response=interview_ai_response,
-            interview_transcript=interview_transcript,
-            interview_is_complete=interview_is_complete,
-            interview_warning=interview_warning,
+        data = await _run_sync(
+            _get_start_status_data_sync,
+            task_id,
+            redis_client,
+            user_info["uid"],
         )
+        return InterviewStartStatusResponse(**data)
     except HTTPException:
         raise
     except Exception as e:
@@ -223,64 +413,39 @@ async def submit_response(
     """
     try:
         logger.info(f"Submitting response for session {session_id}")
-        
-        # Get session and verify ownership
-        session_manager = InterviewSessionManager(redis_client)
-        session = session_manager.get_session(session_id)
-        
-        if not session:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Session not found"
-            )
-        
-        # if session["user_id"] != user_info["uid"]:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_403_FORBIDDEN,
-        #         detail="Not authorized to access this session"
-        #     )
-        
-        # Check if there's already a processing task (prevent audio queue buildup)
-        processing_key = f"session:{session_id}:processing"
-        is_processing = redis_client.get(processing_key)
 
-        if is_processing:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Previous response is still being processed. Please wait."
-            )
-        
-        # Set processing flag
-        redis_client.setex(processing_key, 15, "true") # Set flag for 15 seconds
-        
-        # Process audio or use text response
-        human_input = request.text_response
-        
-        if request.audio_data and not human_input:
-            # Transcribe audio first
+        # Queue transcription in main thread (fast), then run all blocking I/O in thread pool
+        transcribe_task = None
+        if request.audio_data and not request.text_response:
             transcribe_task = transcribe_audio.apply_async(
                 args=[request.audio_data],
-                queue="audio"
+                queue="audio",
             )
-            
-            # Wait for transcription (or could make this async and return immediately)
-            transcribe_result = transcribe_task.get(timeout=30)
-            
-            if transcribe_result["status"] == "error":
+
+        prepare_result = await _run_sync(
+            _submit_response_prepare_sync,
+            session_id,
+            redis_client,
+            request.audio_data if transcribe_task else None,
+            request.text_response,
+            transcribe_task,
+            30,
+        )
+        if "error" in prepare_result:
+            err = prepare_result["error"]
+            if err["code"] == 404:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=err["detail"])
+            if err["code"] == 429:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Transcription failed: {transcribe_result['error']}"
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=err["detail"],
                 )
-            
-            human_input = transcribe_result["transcription"]
-            session_manager.set_transcript(session_id, human_input)
-        
-        if not human_input:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Either audio_data or text_response must be provided"
-            )
-        
+            if err["code"] == 400:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=err["detail"])
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=err["detail"])
+
+        human_input = prepare_result["human_input"]
+
         # Add code input if provided
         if request.code_input:
             human_input += f"\n\n[CODE INPUT]\n{request.code_input}"
@@ -423,112 +588,14 @@ async def get_respond_task_status(
     When completed, use GET /{session_id}/status to get the latest AI response.
     """
     try:
-        session_manager = InterviewSessionManager(redis_client)
-        session = session_manager.get_session(session_id)
-        # if not session or session["user_id"] != user_info["uid"]:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_403_FORBIDDEN,
-        #         detail="Not authorized to access this session",
-        #     )
-
-        # Task-level status (Celery)
-        task_result = AsyncResult(task_id, app=celery_app)
-        state_mapping = {
-            "PENDING": "queued",
-            "STARTED": "processing",
-            "RETRY": "processing",
-            "SUCCESS": "completed",
-            "FAILURE": "failed",
-        }
-        status_str = state_mapping.get(task_result.state, "processing")
-        if task_result.state == "PROGRESS":
-            status_str = "processing"
-
-        result: Optional[Dict[str, Any]] = None
-        error: Optional[str] = None
-        if task_result.state == "SUCCESS":
-            task_data = task_result.result
-            if isinstance(task_data, dict):
-                result = {
-                    "status": task_data.get("status"),
-                    "message": task_data.get("message"),
-                    "last_node": task_data.get("last_node"),
-                }
-        elif task_result.state == "FAILURE":
-            error = str(task_result.info) if task_result.info else "Task failed"
-
-        # Session-level snapshot (mirror of get_interview_status + SSE payload)
-        interview_status: Optional[str] = None
-        interview_ai_response: Optional[Dict[str, Any]] = None
-        interview_transcript: Optional[str] = None
-        interview_is_complete: Optional[bool] = None
-        interview_warning: Optional[Dict[str, Any]] = None
-
-        try:
-            # Current interview status
-            current_status = session_manager.get_status(session_id) or "waiting_for_response"
-            processing_key = f"session:{session_id}:processing"
-            if redis_client.get(processing_key):
-                current_status = "processing"
-            interview_status = current_status
-
-            # AI response: prefer session store (has audio). If task just completed but store
-            # is empty (race or status reset), retry once after a short delay then fall back to task result.
-            response_data = session_manager.get_response(session_id)
-            if not response_data and task_result.state == "SUCCESS" and result and result.get("message"):
-                await asyncio.sleep(0.4)
-                response_data = session_manager.get_response(session_id)
-            if response_data:
-                interview_ai_response = {
-                    "message": response_data.get("message"),
-                    "audio": response_data.get("audio"),
-                    "audio_base64": response_data.get("audio"),
-                    "last_node": response_data.get("last_node"),
-                    "timestamp": response_data.get("timestamp"),
-                    "question_number": None,
-                    "total_questions": None,
-                }
-                interview_status = "ai_responded"
-            elif task_result.state == "SUCCESS" and result and result.get("message"):
-                # Task completed with AI response but session store empty (race or consumed)
-                interview_ai_response = {
-                    "message": result.get("message"),
-                    "audio": None,
-                    "audio_base64": None,
-                    "last_node": result.get("last_node"),
-                    "timestamp": None,
-                    "question_number": None,
-                    "total_questions": None,
-                }
-                interview_status = "ai_responded"
-
-            # Latest transcript
-            interview_transcript = session_manager.get_transcript(session_id)
-
-            # Completion flag
-            interview_is_complete = current_status == "completed"
-
-            # Video quality / termination warning if any
-            interview_warning = session_manager.get_warning(session_id)
-        except Exception as e:
-            # Don't fail the endpoint if the snapshot fails; log and continue with task status.
-            logger.warning(
-                f"Error building interview snapshot in respond-status for session {session_id}: {e}",
-                exc_info=True,
-            )
-
-        return RespondTaskStatusResponse(
-            task_id=task_id,
-            session_id=session_id,
-            status=status_str,
-            result=result,
-            error=error,
-            interview_status=interview_status,
-            interview_ai_response=interview_ai_response,
-            interview_transcript=interview_transcript,
-            interview_is_complete=interview_is_complete,
-            interview_warning=interview_warning,
+        data = await _run_sync(
+            _get_respond_status_data_sync,
+            session_id,
+            task_id,
+            redis_client,
+            user_info["uid"],
         )
+        return RespondTaskStatusResponse(**data)
     except HTTPException:
         raise
     except Exception as e:
@@ -554,77 +621,16 @@ async def get_interview_status(
     - Latest transcription
     """
     try:
-        session_manager = InterviewSessionManager(redis_client)
-        
-        # Wait for session to be created (short timeout for status checks)
-        session = None
-        max_wait = 12  # Wait up to 12 seconds (increased from 5s to handle slower task completion)
-        wait_interval = 0.3  # Check every 300ms
-        waited = 0
-        
-        while waited < max_wait:
-            session = session_manager.get_session(session_id)
-            if session:
-                break
-            await asyncio.sleep(wait_interval)
-            waited += wait_interval
-        
-        # Verify session exists
-        if not session:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Session not found or not yet created"
-            )
-        
-        # Verify ownership
-        if session["user_id"] != user_info["uid"]:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Not authorized to access this session"
-            )
-        
-        # Get status
-        current_status = session_manager.get_status(session_id) or "waiting_for_response"
-        
-        processing_key = f"session:{session_id}:processing"
-        if redis_client.get(processing_key):
-            current_status = "processing"
-
-        # Get response if AI has responded
-        response_data = None
-        ai_response_formatted = None
-        if current_status == "ai_responded":
-            response_data = session_manager.get_response(session_id)
-            if response_data:
-                # Format ai_response with audio_base64 field for frontend compatibility
-                ai_response_formatted = {
-                    "message": response_data.get("message"),
-                    "audio_base64": response_data.get("audio"),  # Map 'audio' to 'audio_base64'
-                    "audio": response_data.get("audio"),  # Keep for backward compatibility
-                    "question_number": None,  # Not implemented yet
-                    "total_questions": None,  # Not implemented yet
-                    "last_node": response_data.get("last_node")
-                }
-        
-        # Get latest transcript
-        transcript = session_manager.get_transcript(session_id)
-        
-        # Check if interview is complete
-        is_complete = current_status == "completed"
-        
-        return InterviewStatusResponse(
-            session_id=session_id,
-            status=current_status,
-            message=response_data.get("message") if response_data else None,
-            audio=response_data.get("audio") if response_data else None,
-            last_node=response_data.get("last_node") if response_data else session.get("last_node"),
-            transcript=transcript,
-            created_at=session.get("created_at"),
-            updated_at=session.get("updated_at"),
-            is_complete=is_complete,
-            ai_response=ai_response_formatted
+        data = await _run_sync(
+            _get_interview_status_data_sync,
+            session_id,
+            redis_client,
+            user_info["uid"],
         )
-        
+        if "error" in data:
+            err = data["error"]
+            raise HTTPException(status_code=err["code"], detail=err["detail"])
+        return InterviewStatusResponse(**data)
     except HTTPException:
         raise
     except Exception as e:
@@ -1023,6 +1029,49 @@ async def end_interview(
             detail=f"Failed to end interview: {str(e)}"
         )
 
+def _get_feedback_status_data_sync(task_id: str, redis_client: Redis) -> Dict[str, Any]:
+    """Blocking: AsyncResult + Redis for feedback task. Run in thread."""
+    task_result = AsyncResult(task_id, app=celery_app)
+    state_mapping = {
+        "PENDING": "queued",
+        "STARTED": "processing",
+        "RETRY": "processing",
+        "SUCCESS": "completed",
+        "FAILURE": "failed",
+    }
+    status_str = state_mapping.get(task_result.state, "processing")
+    progress = 0
+    if task_result.state == "PROGRESS":
+        meta = task_result.info or {}
+        progress = meta.get("progress", 0)
+        status_str = "processing"
+    elif task_result.state == "SUCCESS":
+        progress = 100
+    result = None
+    error = None
+    session_id = redis_client.get(f"feedback_task:{task_id}") or ""
+    if task_result.state == "SUCCESS":
+        task_data = task_result.result
+        if isinstance(task_data, dict):
+            if task_data.get("status") == "completed":
+                result = task_data.get("feedback")
+            elif task_data.get("status") == "error":
+                status_str = "failed"
+                error = task_data.get("error")
+    elif task_result.state == "FAILURE":
+        error = str(task_result.info)
+    if result is not None and not isinstance(result, dict):
+        result = None
+    return {
+        "task_id": task_id,
+        "session_id": session_id or "",
+        "status": status_str,
+        "progress": progress,
+        "result": result,
+        "error": error,
+    }
+
+
 @router.get("/feedback-status/{task_id}", response_model=FeedbackStatusResponse)
 async def get_interview_feedback_status(
     task_id: str,
@@ -1035,51 +1084,8 @@ async def get_interview_feedback_status(
     Poll this with the feedback_task_id returned from POST /end when feedback was queued.
     """
     try:
-        task_result = AsyncResult(task_id, app=celery_app)
-
-        state_mapping = {
-            "PENDING": "queued",
-            "STARTED": "processing",
-            "RETRY": "processing",
-            "SUCCESS": "completed",
-            "FAILURE": "failed",
-        }
-        status_str = state_mapping.get(task_result.state, "processing")
-
-        progress = 0
-        if task_result.state == "PROGRESS":
-            meta = task_result.info or {}
-            progress = meta.get("progress", 0)
-            status_str = "processing"
-        elif task_result.state == "SUCCESS":
-            progress = 100
-
-        result = None
-        error = None
-        session_id = redis_client.get(f"feedback_task:{task_id}") or ""
-
-        if task_result.state == "SUCCESS":
-            task_data = task_result.result
-            if isinstance(task_data, dict):
-                if task_data.get("status") == "completed":
-                    result = task_data.get("feedback")
-                elif task_data.get("status") == "error":
-                    status_str = "failed"
-                    error = task_data.get("error")
-        elif task_result.state == "FAILURE":
-            error = str(task_result.info)
-
-        if result is not None and not isinstance(result, dict):
-            result = None
-
-        return FeedbackStatusResponse(
-            task_id=task_id,
-            session_id=session_id or "",
-            status=status_str,
-            progress=progress,
-            result=result,
-            error=error,
-        )
+        data = await _run_sync(_get_feedback_status_data_sync, task_id, redis_client)
+        return FeedbackStatusResponse(**data)
     except Exception as e:
         logger.error(f"Error getting interview feedback status: {e}", exc_info=True)
         raise HTTPException(
