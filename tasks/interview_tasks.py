@@ -167,8 +167,11 @@ def process_interview_start(self, session_id: str, interview_type: str, user_id:
                 logger.info(f"Audio synthesis successful for {session_id}")
             except Exception as e:
                 logger.error(f"Error synthesizing audio for {session_id}: {e}")
-                # Continue without audio if synthesis fails
-        
+        # Require audio for success; otherwise mark task as failed
+        if message and not audio_base64:
+            self.session_manager.set_status(session_id, "error")
+            raise RuntimeError("Audio synthesis failed; no audio returned for greeting.")
+
         # Update session with response (don't store full workflow_state, LangGraph handles that)
         self.session_manager.update_session(session_id, {
             "message_count": len(response.get('messages', [])),
@@ -176,15 +179,15 @@ def process_interview_start(self, session_id: str, interview_type: str, user_id:
             "history": response.get('history', ''),
             "last_node": last_node
         })
-        
+
         # Store response for retrieval with audio
         self.session_manager.set_response(session_id, message, audio_base64, last_node)
         self.session_manager.set_status(session_id, "ai_responded")
-        
+
         logger.info(f"Interview {session_id} initialized successfully")
-        
+
         self.update_state(state="COMPLETED", meta={"progress": 100, "message": "Interview initialized successfully"})
-        
+
         return {
             "session_id": session_id,
             "status": "ai_responded",
@@ -290,8 +293,13 @@ def process_user_response(self, session_id: str, human_input: str) -> Dict[str, 
                 logger.info(f"Audio synthesis successful for {session_id}")
             except Exception as e:
                 logger.error(f"Error synthesizing audio for {session_id}: {e}")
-                # Continue without audio if synthesis fails
-        
+        # Require audio for success; otherwise mark task as failed
+        if message and not audio_base64:
+            processing_key = f"session:{session_id}:processing"
+            self.redis_client.delete(processing_key)
+            self.session_manager.set_status(session_id, "error")
+            raise RuntimeError("Audio synthesis failed; no audio returned for AI response.")
+
         # Update session (don't store full messages, LangGraph handles state)
         self.session_manager.update_session(session_id, {
             "message_count": len(response.get('messages', [])),
@@ -299,17 +307,17 @@ def process_user_response(self, session_id: str, human_input: str) -> Dict[str, 
             "history": response.get('history', ''),
             "last_node": last_node
         })
-        
+
         # Store response with audio
         self.session_manager.set_response(session_id, message, audio_base64, last_node)
         self.session_manager.set_status(session_id, "ai_responded")
-        
+
         # Clear processing flag
         processing_key = f"session:{session_id}:processing"
         self.redis_client.delete(processing_key)
-        
+
         logger.info(f"User response processed for session {session_id}")
-        
+
         return {
             "session_id": session_id,
             "status": "ai_responded",
