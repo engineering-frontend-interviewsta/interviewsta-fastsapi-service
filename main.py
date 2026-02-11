@@ -69,8 +69,6 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "service": settings.SERVICE_NAME,
-        "version": settings.VERSION
     }
 
 
