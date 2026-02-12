@@ -156,62 +156,62 @@ class AudioProcessor:
             logger.error(f"Transcription error: {e}", exc_info=True)
             raise
         
-        def synthesize_speech(self, text: str, voice_id: Optional[str] = None, speed: Optional[str] = None) -> bytes:
-            """
-            Synthesize speech from text using AWS Polly TTS
+    def synthesize_speech(self, text: str, voice_id: Optional[str] = None, speed: Optional[str] = None) -> bytes:
+        """
+        Synthesize speech from text using AWS Polly TTS
+        
+        Args:
+            text: Text to convert to speech
+            voice_id: AWS Polly voice ID (optional, uses default if not provided)
+            speed: Speech rate (e.g., '75%', 'slow', 'medium', 'fast', 'x-slow', 'x-fast')
             
-            Args:
-                text: Text to convert to speech
-                voice_id: AWS Polly voice ID (optional, uses default if not provided)
-                speed: Speech rate (e.g., '75%', 'slow', 'medium', 'fast', 'x-slow', 'x-fast')
-                
-            Returns:
-                bytes: MP3 audio data
-            """
-            try:
-                logger.info(f"Synthesizing speech with AWS Polly (length: {len(text)})")
-                
-                # Truncate if too long (Polly has 3000 character limit for standard, 6000 for neural)
-                max_chars = 6000 if self.polly_engine == "neural" else 3000
-                if len(text) > max_chars:
-                    text = text[:max_chars - 3] + "..."
-                    logger.warning(f"Text truncated to {max_chars} characters for Polly")
-                
-                # Escape special characters for SSML
-                text_escaped = html.escape(text)
-                
-                # Wrap text in SSML with speech rate control
-                speech_rate = speed or self.polly_speech_rate
-                ssml_text = f'<speak><prosody rate="{speech_rate}">{text_escaped}</prosody></speak>'
-                
-                # Determine voice
-                voice = voice_id or self.polly_voice_id
-                
-                logger.info(f"Using Polly voice: {voice}, engine: {self.polly_engine}, rate: {speech_rate}")
-                
-                # Synthesize speech with AWS Polly
-                response = self.polly_client.synthesize_speech(
-                    Text=ssml_text,
-                    TextType='ssml',
-                    OutputFormat='mp3',
-                    VoiceId=voice,
-                    Engine=self.polly_engine
-                )
-                
-                # Read audio stream
-                if "AudioStream" in response:
-                    audio_bytes = response["AudioStream"].read()
-                    logger.info(f"AWS Polly synthesis completed ({len(audio_bytes)} bytes)")
-                    return audio_bytes
-                else:
-                    raise Exception("No audio stream in Polly response")
-                
-            except (BotoCoreError, ClientError) as error:
-                logger.error(f"AWS Polly error: {error}")
-                raise
-            except Exception as e:
-                logger.error(f"Error synthesizing speech with AWS Polly: {e}")
-                raise
+        Returns:
+            bytes: MP3 audio data
+        """
+        try:
+            logger.info(f"Synthesizing speech with AWS Polly (length: {len(text)})")
+            
+            # Truncate if too long (Polly has 3000 character limit for standard, 6000 for neural)
+            max_chars = 6000 if self.polly_engine == "neural" else 3000
+            if len(text) > max_chars:
+                text = text[:max_chars - 3] + "..."
+                logger.warning(f"Text truncated to {max_chars} characters for Polly")
+            
+            # Escape special characters for SSML
+            text_escaped = html.escape(text)
+            
+            # Wrap text in SSML with speech rate control
+            speech_rate = speed or self.polly_speech_rate
+            ssml_text = f'<speak><prosody rate="{speech_rate}">{text_escaped}</prosody></speak>'
+            
+            # Determine voice
+            voice = voice_id or self.polly_voice_id
+            
+            logger.info(f"Using Polly voice: {voice}, engine: {self.polly_engine}, rate: {speech_rate}")
+            
+            # Synthesize speech with AWS Polly
+            response = self.polly_client.synthesize_speech(
+                Text=ssml_text,
+                TextType='ssml',
+                OutputFormat='mp3',
+                VoiceId=voice,
+                Engine=self.polly_engine
+            )
+            
+            # Read audio stream
+            if "AudioStream" in response:
+                audio_bytes = response["AudioStream"].read()
+                logger.info(f"AWS Polly synthesis completed ({len(audio_bytes)} bytes)")
+                return audio_bytes
+            else:
+                raise Exception("No audio stream in Polly response")
+            
+        except (BotoCoreError, ClientError) as error:
+            logger.error(f"AWS Polly error: {error}")
+            raise
+        except Exception as e:
+            logger.error(f"Error synthesizing speech with AWS Polly: {e}")
+            raise
     
     def synthesize_speech_base64(self, text: str, voice_id: Optional[str] = None, speed: Optional[str] = None) -> str:
         """
