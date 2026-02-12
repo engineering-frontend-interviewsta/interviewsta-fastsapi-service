@@ -10,6 +10,7 @@ import os
 import logging
 from typing import Optional
 import html
+import io 
 
 logger = logging.getLogger(__name__)
 
@@ -81,28 +82,38 @@ class AudioProcessor:
             # Decode base64 audio
             audio_bytes = base64.b64decode(audio_base64)
             
-            # Check file size
+            # Validate WAV header
+            if not audio_bytes.startswith(b'RIFF'):
+                raise ValueError("Invalid WAV file - missing RIFF header")
+            
             file_size = len(audio_bytes)
-            logger.info(f"Transcribing audio with Cartesia ink-whisper ({file_size} bytes)")
+            logger.info(f"Transcribing audio ({file_size} bytes)")
             
-            if file_size == 0:
-                raise ValueError("Audio file is empty")
+            if file_size < 44:  # Minimum WAV header size
+                raise ValueError(f"Audio file too small: {file_size} bytes")
             
-            # Prepare request headers
+            # ✅ FIX: Use correct Cartesia headers (Bearer auth, not custom header)
             headers = {
                 "Authorization": f"Bearer {self.cartesia_api_key}",
                 "Cartesia-Version": self.cartesia_api_version
+                # DO NOT set Content-Type - let requests set it automatically for multipart
             }
             
-            # Prepare multipart form data
+            # ✅ FIX: Use io.BytesIO for proper file-like object
+            # This ensures proper multipart/form-data encoding
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = "audio.wav"  # Set filename attribute
+            
             files = {
-                "file": ("audio.wav", audio_bytes, "audio/wav")
+                "file": ("audio.wav", audio_file, "audio/wav")
             }
             
             data = {
-                "model": self.cartesia_model,
+                "model": self.cartesia_model,  # "ink-whisper"
                 "language": "en"
             }
+            
+            logger.info(f"Sending to Cartesia: {self.cartesia_api_url}")
             
             # Make request to Cartesia API
             response = requests.post(
@@ -113,83 +124,94 @@ class AudioProcessor:
                 timeout=30
             )
             
-            # Check for errors
+            # Enhanced error logging
             if response.status_code != 200:
-                error_msg = f"Cartesia API error (status {response.status_code}): {response.text}"
-                logger.error(error_msg)
-                raise Exception(error_msg)
+                logger.error(f"Cartesia API error (status {response.status_code})")
+                logger.error(f"Response headers: {dict(response.headers)}")
+                logger.error(f"Response body: {response.text[:1000]}")
+                raise Exception(f"Cartesia API error ({response.status_code}): {response.text}")
             
             # Parse response
             result = response.json()
             transcription = result.get("text", "").strip()
             
-            logger.info(f"Cartesia transcription completed: '{transcription[:50]}...'")
+            if not transcription:
+                logger.warning("Empty transcription received from Cartesia")
+                logger.warning(f"Full response: {result}")
+            
+            logger.info(f"Transcription success: '{transcription[:100]}...'")
             
             return transcription
             
+        except base64.binascii.Error as e:
+            logger.error(f"Invalid base64 encoding: {e}")
+            raise ValueError(f"Invalid base64 audio data: {e}")
+        except requests.exceptions.Timeout:
+            logger.error("Cartesia API timeout after 30s")
+            raise Exception("Transcription service timeout")
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error making request to Cartesia API: {e}")
-            raise
+            logger.error(f"Network error calling Cartesia: {e}")
+            raise Exception(f"Network error: {str(e)}")
         except Exception as e:
-            logger.error(f"Error transcribing audio with Cartesia: {e}")
+            logger.error(f"Transcription error: {e}", exc_info=True)
             raise
-    
-    def synthesize_speech(self, text: str, voice_id: Optional[str] = None, speed: Optional[str] = None) -> bytes:
-        """
-        Synthesize speech from text using AWS Polly TTS
         
-        Args:
-            text: Text to convert to speech
-            voice_id: AWS Polly voice ID (optional, uses default if not provided)
-            speed: Speech rate (e.g., '75%', 'slow', 'medium', 'fast', 'x-slow', 'x-fast')
+        def synthesize_speech(self, text: str, voice_id: Optional[str] = None, speed: Optional[str] = None) -> bytes:
+            """
+            Synthesize speech from text using AWS Polly TTS
             
-        Returns:
-            bytes: MP3 audio data
-        """
-        try:
-            logger.info(f"Synthesizing speech with AWS Polly (length: {len(text)})")
-            
-            # Truncate if too long (Polly has 3000 character limit for standard, 6000 for neural)
-            max_chars = 6000 if self.polly_engine == "neural" else 3000
-            if len(text) > max_chars:
-                text = text[:max_chars - 3] + "..."
-                logger.warning(f"Text truncated to {max_chars} characters for Polly")
-            
-            # Escape special characters for SSML
-            text_escaped = html.escape(text)
-            
-            # Wrap text in SSML with speech rate control
-            speech_rate = speed or self.polly_speech_rate
-            ssml_text = f'<speak><prosody rate="{speech_rate}">{text_escaped}</prosody></speak>'
-            
-            # Determine voice
-            voice = voice_id or self.polly_voice_id
-            
-            logger.info(f"Using Polly voice: {voice}, engine: {self.polly_engine}, rate: {speech_rate}")
-            
-            # Synthesize speech with AWS Polly
-            response = self.polly_client.synthesize_speech(
-                Text=ssml_text,
-                TextType='ssml',
-                OutputFormat='mp3',
-                VoiceId=voice,
-                Engine=self.polly_engine
-            )
-            
-            # Read audio stream
-            if "AudioStream" in response:
-                audio_bytes = response["AudioStream"].read()
-                logger.info(f"AWS Polly synthesis completed ({len(audio_bytes)} bytes)")
-                return audio_bytes
-            else:
-                raise Exception("No audio stream in Polly response")
-            
-        except (BotoCoreError, ClientError) as error:
-            logger.error(f"AWS Polly error: {error}")
-            raise
-        except Exception as e:
-            logger.error(f"Error synthesizing speech with AWS Polly: {e}")
-            raise
+            Args:
+                text: Text to convert to speech
+                voice_id: AWS Polly voice ID (optional, uses default if not provided)
+                speed: Speech rate (e.g., '75%', 'slow', 'medium', 'fast', 'x-slow', 'x-fast')
+                
+            Returns:
+                bytes: MP3 audio data
+            """
+            try:
+                logger.info(f"Synthesizing speech with AWS Polly (length: {len(text)})")
+                
+                # Truncate if too long (Polly has 3000 character limit for standard, 6000 for neural)
+                max_chars = 6000 if self.polly_engine == "neural" else 3000
+                if len(text) > max_chars:
+                    text = text[:max_chars - 3] + "..."
+                    logger.warning(f"Text truncated to {max_chars} characters for Polly")
+                
+                # Escape special characters for SSML
+                text_escaped = html.escape(text)
+                
+                # Wrap text in SSML with speech rate control
+                speech_rate = speed or self.polly_speech_rate
+                ssml_text = f'<speak><prosody rate="{speech_rate}">{text_escaped}</prosody></speak>'
+                
+                # Determine voice
+                voice = voice_id or self.polly_voice_id
+                
+                logger.info(f"Using Polly voice: {voice}, engine: {self.polly_engine}, rate: {speech_rate}")
+                
+                # Synthesize speech with AWS Polly
+                response = self.polly_client.synthesize_speech(
+                    Text=ssml_text,
+                    TextType='ssml',
+                    OutputFormat='mp3',
+                    VoiceId=voice,
+                    Engine=self.polly_engine
+                )
+                
+                # Read audio stream
+                if "AudioStream" in response:
+                    audio_bytes = response["AudioStream"].read()
+                    logger.info(f"AWS Polly synthesis completed ({len(audio_bytes)} bytes)")
+                    return audio_bytes
+                else:
+                    raise Exception("No audio stream in Polly response")
+                
+            except (BotoCoreError, ClientError) as error:
+                logger.error(f"AWS Polly error: {error}")
+                raise
+            except Exception as e:
+                logger.error(f"Error synthesizing speech with AWS Polly: {e}")
+                raise
     
     def synthesize_speech_base64(self, text: str, voice_id: Optional[str] = None, speed: Optional[str] = None) -> str:
         """
