@@ -277,6 +277,8 @@ def _get_respond_status_data_sync(
                         interview_ai_response["speakingfeedback"] = session_data.get("speaking_feedback")
                         interview_ai_response["currentcomprehension"] = session_data.get("current_comprehension")
                         interview_ai_response["comprehensionfeedback"] = session_data.get("comprehension_feedback")
+                        interview_ai_response["currentmcq"] = session_data.get("current_mcq")
+                        interview_ai_response["mcqfeedback"] = session_data.get("mcq_feedback")
                     interview_status = "ai_responded"
             
             interview_transcript = session_manager.get_transcript(session_id)
