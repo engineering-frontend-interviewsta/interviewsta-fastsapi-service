@@ -614,6 +614,8 @@ def process_user_response_with_transcription(
         speaking_feedback = None
         current_comprehension = None
         comprehension_feedback = None
+        current_mcq = None
+        mcq_feedback = None
 
         logger.info(f"Interview type: {interview_type}")
         if interview_type == "Communication":
@@ -652,6 +654,30 @@ def process_user_response_with_transcription(
             if last_node in ("Comprehension_feedback", "Comprehension_feedback_after"):
                 comprehension_feedback = message  # The feedback is in the message
                 logger.info(f"Extracted comprehension feedback for session {session_id}")
+
+            # Extract MCQ entity (question, options, answer)
+            if last_node in ("MCQ", "MCQ_after") and response.get('current_mcq_entity'):
+                mcq_data = response['current_mcq_entity']
+                if isinstance(mcq_data, dict):
+                    current_mcq = {
+                        "instruction": mcq_data.get("instruction"),
+                        "question": mcq_data.get("question"),
+                        "options": mcq_data.get("options"),
+                        "answer": mcq_data.get("answer"),
+                    }
+                else:
+                    current_mcq = {
+                        "instruction": getattr(mcq_data, 'instruction', None),
+                        "question": getattr(mcq_data, 'question', None),
+                        "options": getattr(mcq_data, 'options', None),
+                        "answer": getattr(mcq_data, 'answer', None),
+                    }
+                logger.info(f"Extracted MCQ data for session {session_id}")
+
+            # Extract MCQ feedback (at End node, the final summary/feedback is in the message)
+            if last_node == "End":
+                mcq_feedback = message  # Final feedback/wrap-up message
+                logger.info(f"Extracted MCQ/final feedback for session {session_id}")
         
         if not message:
             clear_processing_flag(self.redis_client, session_id)
@@ -697,6 +723,12 @@ def process_user_response_with_transcription(
 
             if comprehension_feedback:
                 phase_data['comprehension_feedback'] = comprehension_feedback
+
+            if current_mcq:
+                phase_data['current_mcq'] = current_mcq
+
+            if mcq_feedback:
+                phase_data['mcq_feedback'] = mcq_feedback
             
             if phase_data:
                 self.session_manager.update_session(session_id, phase_data)  # ← This stores it
@@ -728,7 +760,7 @@ def process_user_response_with_transcription(
             "message": message,
             "last_node": last_node,
             "audio_available": audio_base64 is not None,
-            "interview_ai_response": current_speaking or speaking_feedback or current_comprehension or comprehension_feedback
+            "interview_ai_response": current_speaking or speaking_feedback or current_comprehension or comprehension_feedback or current_mcq or mcq_feedback
         }
         
     except Exception as e:
