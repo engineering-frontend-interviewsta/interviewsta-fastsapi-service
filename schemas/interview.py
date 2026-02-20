@@ -8,7 +8,7 @@ from datetime import datetime
 
 class InterviewStartRequest(BaseModel):
     """Request to start an interview session"""
-    interview_type: Literal["Technical", "HR", "Company", "Subject", "CaseStudy"]
+    interview_type: Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview"]
     session_id: str
     user_id: str
     payload: Dict[str, Any] = Field(default_factory=dict)
@@ -36,18 +36,23 @@ class InterviewStartResponse(BaseModel):
 
 
 class UserResponseRequest(BaseModel):
-    """User's response to interview question"""
-    audio_data: Optional[str] = None  # base64 encoded
-    text_response: Optional[str] = None
+    """
+    User's response to interview question.
+    At least one of audio_data or text_response is required.
+    - audio_data: for speaking phases (transcribed).
+    - text_response: for text-only phases (e.g. Communication comprehension/writing); can be sent alone.
+    """
+    audio_data: Optional[str] = None  # base64 encoded; omit for text-only (e.g. comprehension)
+    text_response: Optional[str] = None  # plain text; can be the only field for writing phases
     code_input: Optional[str] = None
     video_quality_data: Optional[Dict[str, Any]] = None
     
     class Config:
         json_schema_extra = {
-            "example": {
-                "audio_data": "base64_encoded_wav_data...",
-                "code_input": "def solution(): pass"
-            }
+            "examples": [
+                {"audio_data": "base64_encoded_wav_data...", "code_input": "def solution(): pass"},
+                {"text_response": "The customer should contact support with order ID and request a replacement."},
+            ]
         }
 
 

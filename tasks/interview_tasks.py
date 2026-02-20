@@ -16,6 +16,8 @@ from workflows.technical import TechnicalInterviewState
 from workflows.hr import HRInterviewState
 from workflows.coding import CompanyInterviewState, SubjectInterviewState
 from workflows.case_study import CaseStudyInterviewState
+from workflows.communication import CommunicationInterviewState
+from workflows.rolebased import RoleBasedInterviewState
 from langchain_core.messages import HumanMessage
 from services.audio_processor import AudioProcessor
 
@@ -121,6 +123,24 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             current_case_reference="",
             case_completed=False
         )
+    elif interview_type == "Communication":  # ADD THIS BLOCK
+        return CommunicationInterviewState(
+            messages=[],
+            LastNode="",
+            history="",
+            current_query="",
+            mcq_questions_asked=[],
+            pending_mcq_answer="",
+            set_timer_on=False
+        )
+    elif interview_type == "Role-Based Interview":
+        return RoleBasedInterviewState(
+            LastNode="",
+            history="",
+            resume=payload.get("resume", "No resume provided"),
+            role=payload.get("role", "Frontend Development"),
+            messages=[],
+        )
     else:
         raise ValueError(f"Invalid interview type: {interview_type}")
 
@@ -137,6 +157,28 @@ def update_workflow_state(workflow, config, interview_type: str, current_state, 
             "messages": updated_messages,
             "history": current_state.values.get("history", "") + "\nInterviewee-" + human_input
         })
+    elif interview_type == "Communication":  # ADD THIS BLOCK
+        # For Communication, handle phase-specific logic
+        human_message = HumanMessage(content=human_input)
+        current_messages = current_state.values.get("messages", [])
+        updated_messages = current_messages + [human_message]
+        
+        last_node = current_state.values.get("LastNode", "")
+        
+        # Store MCQ answer if in MCQ phase
+        if last_node in ("MCQ", "MCQ_after"):
+            workflow.update_state(config, {
+                "messages": updated_messages,
+                "current_query": human_input,
+                "pending_mcq_answer": human_input,
+                "history": current_state.values.get("history", "") + "\nInterviewee-" + human_input
+            })
+        else:
+            workflow.update_state(config, {
+                "messages": updated_messages,
+                "current_query": human_input,
+                "history": current_state.values.get("history", "") + "\nInterviewee-" + human_input
+            })
     else:
         # For other types
         messages = current_state.values.get("messages", [])
@@ -232,6 +274,53 @@ def process_interview_start(
         
         logger.info(f"Session {session_id} created and marked as processing")
         
+        # Subject interviews: fetch research questions from DRF by interview_test_id
+        if interview_type == "Subject":
+            interview_test_id = payload.get("interview_test_id") or payload.get("interview_type_id")
+            if interview_test_id is not None:
+                try:
+                    from services.drf_client import get_research_questions_for_subject
+                    research = get_research_questions_for_subject(interview_test_id=int(interview_test_id))
+                    if research is not None:
+                        qr = None
+                        if isinstance(research, str):
+                            qr = research
+                        elif isinstance(research, dict):
+                            raw = (
+                                research.get("QuestionResearch")
+                                or research.get("research_questions")
+                                or research.get("research")
+                            )
+                            if isinstance(raw, list):
+                                qr = "\n".join(str(x) for x in raw)
+                            else:
+                                qr = str(raw) if raw is not None else None
+                            if qr is None:
+                                qr = str(research)
+                        elif isinstance(research, list):
+                            qr = "\n".join(str(x) for x in research)
+                        else:
+                            qr = str(research)
+                        if qr:
+                            payload = {**payload, "QuestionResearch": qr}
+                        logger.info(f"Subject interview: loaded research questions for interview_test_id={interview_test_id}")
+                except Exception as e:
+                    logger.warning(f"Could not fetch research questions for Subject interview: {e}")
+        
+        # Company interviews: fetch company name from DRF by interview_test_id / interview_type_id
+        if interview_type == "Company":
+            interview_test_id = payload.get("interview_test_id") or payload.get("interview_type_id")
+            if interview_test_id is not None:
+                try:
+                    from services.drf_client import get_company_for_interview
+                    result = get_company_for_interview(interview_type_id=int(interview_test_id))
+                    logger.info(f"Company interview: result={result} type={type(result)}")
+                    if result is not None and isinstance(result, dict) and result.get("company"):
+                        payload = {**payload, "company": result["company"]}
+                        logger.info(f"Company interview: loaded company for interview_type_id={interview_test_id}")
+                except Exception as e:
+                    logger.warning(f"Could not fetch company for Company interview: {e}")
+        
         # Step 2: Initialize workflow (40% progress)
         self.update_state(
             state="PROGRESS",
@@ -240,7 +329,11 @@ def process_interview_start(
         
         # Get singleton interview agent
         agent = get_interview_agent()
-        workflow = agent.get_graph(interview_type)
+        if interview_type == "Role-Based Interview":
+            role = payload.get("role", "Frontend Development")
+            workflow = agent.get_graph(interview_type, role=role)
+        else:
+            workflow = agent.get_graph(interview_type)
         config = agent.config_for_session(session_id)
         interrupt_nodes = agent.get_interrupt_nodes(interview_type)
         
@@ -377,17 +470,18 @@ def process_user_response_with_transcription(
             raise ValueError(f"Session {session_id} not found")
         
         interview_type = session["interview_type"]
-        
+        payload_from_session = session.get("payload") or {}
+
         # Step 1: Get human input (transcribe if needed) - 25% progress
         self.update_state(
             state="PROGRESS",
             meta={"progress": 10, "message": "Processing input..."}
         )
         
-        human_input = text_response
+        human_input = (text_response or "").strip() or None
         
-        if audio_data and not text_response:
-            # Transcribe audio
+        if audio_data and not human_input:
+            # Transcribe audio (speaking phase)
             self.update_state(
                 state="PROGRESS",
                 meta={"progress": 25, "message": "Transcribing audio..."}
@@ -408,6 +502,10 @@ def process_user_response_with_transcription(
                 logger.error(f"Transcription failed for {session_id}: {e}")
                 clear_processing_flag(self.redis_client, session_id)
                 raise Exception(f"Transcription failed: {str(e)}")
+        elif human_input:
+            # Text-only (e.g. Communication comprehension phase): use as-is and store as transcript
+            self.session_manager.set_transcript(session_id, human_input)
+            logger.info(f"Text-only response for session {session_id} ({len(human_input)} chars)")
         
         if not human_input:
             clear_processing_flag(self.redis_client, session_id)
@@ -427,7 +525,11 @@ def process_user_response_with_transcription(
         
         # Get workflow and current state
         agent = get_interview_agent()
-        workflow = agent.get_graph(interview_type)
+        if interview_type == "Role-Based Interview":
+            role = payload_from_session.get("role", "Frontend Development")
+            workflow = agent.get_graph(interview_type, role=role)
+        else:
+            workflow = agent.get_graph(interview_type)
         config = agent.config_for_session(session_id)
         interrupt_nodes = agent.get_interrupt_nodes(interview_type)
         
@@ -459,6 +561,49 @@ def process_user_response_with_transcription(
         # Extract AI message
         message = response['messages'][-1].content if response.get('messages') else ""
         last_node = response.get('LastNode', '')
+
+        current_speaking = None
+        speaking_feedback = None
+        current_comprehension = None
+        comprehension_feedback = None
+
+        logger.info(f"Interview type: {interview_type}")
+        if interview_type == "Communication":
+             
+            # Extract speaking data
+            if last_node == "Speaking" and response.get('current_speaking'):
+                logger.info(f"Speaking interview phase and custom response")
+                speaking_data = response['current_speaking']
+                current_speaking = {
+                    "instruction": speaking_data.instruction if hasattr(speaking_data, 'instruction') else None,
+                    "paragraph": speaking_data.paragraph if hasattr(speaking_data, 'paragraph') else None,
+                }
+                logger.info(f"Extracted speaking data for session {session_id}")
+            
+            # Extract speaking feedback
+            if last_node in ("Speaking_feedback", "Speaking_feedback_after"):
+                speaking_feedback = message  # The feedback is in the message
+                logger.info(f"Extracted speaking feedback for session {session_id}")
+
+            # Extract comprehension instruction and question (so frontend can show writing prompt)
+            if last_node in ("Comprehension", "Comprehension_after") and response.get('current_writing_comprehension'):
+                comp_data = response['current_writing_comprehension']
+                if isinstance(comp_data, dict):
+                    current_comprehension = {
+                        "instruction": comp_data.get("instruction"),
+                        "question": comp_data.get("question"),
+                    }
+                else:
+                    current_comprehension = {
+                        "instruction": getattr(comp_data, 'instruction', None),
+                        "question": getattr(comp_data, 'question', None),
+                    }
+                logger.info(f"Extracted comprehension data for session {session_id}")
+
+            # Extract comprehension feedback
+            if last_node in ("Comprehension_feedback", "Comprehension_feedback_after"):
+                comprehension_feedback = message  # The feedback is in the message
+                logger.info(f"Extracted comprehension feedback for session {session_id}")
         
         if not message:
             clear_processing_flag(self.redis_client, session_id)
@@ -486,6 +631,25 @@ def process_user_response_with_transcription(
             state="PROGRESS",
             meta={"progress": 95, "message": "Storing response..."}
         )
+
+        if interview_type == "Communication":
+            phase_data = {}
+            
+            if current_speaking:
+                phase_data['current_speaking'] = current_speaking
+            
+            if speaking_feedback:
+                phase_data['speaking_feedback'] = speaking_feedback
+
+            if current_comprehension:
+                phase_data['current_comprehension'] = current_comprehension
+
+            if comprehension_feedback:
+                phase_data['comprehension_feedback'] = comprehension_feedback
+            
+            if phase_data:
+                self.session_manager.update_session(session_id, phase_data)  # ← This stores it
+                logger.info(f"Stored Communication phase data: {list(phase_data.keys())}")
         
         self.session_manager.update_session(session_id, {
             "message_count": len(response.get('messages', [])),
@@ -512,7 +676,8 @@ def process_user_response_with_transcription(
             "session_id": session_id,
             "message": message,
             "last_node": last_node,
-            "audio_available": audio_base64 is not None
+            "audio_available": audio_base64 is not None,
+            "interview_ai_response": current_speaking or speaking_feedback or current_comprehension or comprehension_feedback
         }
         
     except Exception as e:

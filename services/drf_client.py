@@ -34,6 +34,54 @@ def _post(path: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str, An
         return False
 
 
+def _get(path: str, params: Optional[Dict[str, Any]] = None, timeout: int = 30) -> Any:
+    """GET request to DRF internal API. Returns JSON on success, False on failure."""
+    url = f"{_drf_base_url()}{path}"
+    try:
+        r = requests.get(url, params=params or {}, headers=_drf_headers(), timeout=timeout)
+        if r.ok:
+            return r.json()
+        logger.warning(f"DRF API error: {path} status={r.status_code} body={r.text[:500]}")
+        return None
+    except requests.RequestException as e:
+        logger.error(f"DRF API GET failed: {path} error={e}", exc_info=True)
+        return None
+
+
+def get_research_questions_for_subject(interview_test_id: Optional[int] = None) -> Optional[Any]:
+    """
+    Fetch relevant research questions for a Subject interview from DRF.
+    Calls InternalQuestionResearchView: GET internal/question-research/?interview_type_id=...
+    DRF returns { "interview_type_id", "topic", "research" }; we use "research" as QuestionResearch.
+
+    Args:
+        interview_test_id: InterviewTest id (same as interview_type_id in Django).
+
+    Returns:
+        Response payload from DRF with keys interview_type_id, topic, research; or None on failure.
+    """
+    if interview_test_id is None:
+        return None
+    return _get("/api/internal/question-research/", params={"interview_type_id": interview_test_id})
+
+
+def get_company_for_interview(interview_type_id: Optional[int] = None) -> Optional[Any]:
+    """
+    Fetch company name for a Company interview from DRF.
+    Calls InternalInterviewCompanyView: GET internal/interview-company/?interview_type_id=...
+    DRF returns { "interview_type_id", "company" }; we use "company" in initial state.
+
+    Args:
+        interview_type_id: InterviewTest id from the client.
+
+    Returns:
+        Response payload from DRF with keys interview_type_id, company; or None on failure.
+    """
+    if interview_type_id is None:
+        return None
+    return _get("/api/internal/interview-company/", params={"interview_type_id": interview_type_id})
+
+
 def save_resume_analysis_to_db(
     user_email: str,
     session_id: str,
@@ -68,6 +116,20 @@ def save_resume_analysis_to_db(
     return _post("/api/internal/resume-analysis/", payload)
 
 
+def _normalize_interview_type_for_drf(interview_type: str) -> str:
+    """Normalize to what Django/DRF expects (e.g. TechnicalFeedback, get_sesion_history)."""
+    if not interview_type:
+        return "Technical Interview"
+    t = interview_type.strip()
+    if t in ("Technical", "Coding", "Technical Interview", "Coding Interview"):
+        return "Technical Interview"
+    if t in ("HR", "HR Interview"):
+        return "HR Interview"
+    if t in ("CaseStudy", "Case Study", "Case Study Interview"):
+        return "Case Study Interview"
+    return t
+
+
 def save_feedback_to_db(
     user_email: str,
     session_id: str,
@@ -83,11 +145,11 @@ def save_feedback_to_db(
     Save interview feedback via DRF internal API.
     Same contract as former django_db.save_feedback_to_db.
     """
-    # Map to DRF-friendly names (e.g. interaction_status_log)
+    interview_type_normalized = _normalize_interview_type_for_drf(interview_type)
     payload = {
         "user_email": user_email,
         "session_id": session_id,
-        "interview_type": interview_type,
+        "interview_type": interview_type_normalized,
         "interview_test_id": interview_test_id,
         "duration_seconds": duration_seconds,
         "feedback_data": feedback_data,

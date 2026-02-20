@@ -28,7 +28,7 @@ class InterviewSessionManager:
         Args:
             session_id: Unique session identifier
             interview_type: Type of interview (Technical, HR, etc.)
-            user_id: Firebase user ID
+            user_id: User email (used for session ownership / email-based auth)
             payload: Initial session data
             
         Returns:

@@ -13,20 +13,22 @@ from workflows.hr import get_hr_graph
 from workflows.coding import get_graph as get_coding_graph
 from workflows.case_study import build_case_study_graph
 from workflows.communication import build_communication_graph
+from workflows.rolebased import get_role_based_graph
 
 logger = logging.getLogger(__name__)
 
 # Interview types that use a checkpointer (session state)
-INTERVIEW_TYPES = ("Technical", "HR", "Company", "Subject", "CaseStudy", "Communication")
+INTERVIEW_TYPES = ("Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview")
 
-# Interrupt nodes per type (for human-in-the-loop)
+# Interrupt nodes per type (for human-in-the-loop). Role-Based: all *_after nodes.
 INTERRUPT_NODES: Dict[str, List[str]] = {
     "Technical": ["Greeting_after", "Technical_after", "Coding_after", "Project_after"],
     "HR": ["Greeting_after", "HR_after"],
     "Company": ["Greeting_after", "Coding_after"],
     "Subject": ["Greeting_after", "Coding_after"],
     "CaseStudy": ["Greeting_after", "CaseStudy_after"],
-    "Communication": ["Greeting_after", "Rapport_after", "Dictation_after", "Comprehension_after", "MCQ_after"],
+    "Communication": ["Greeting_after", "Rapport_after", "PersonalDetails_after", "Speaking_after", "Speaking_feedback_after", "Comprehension_after", "Comprehension_feedback_after", "MCQ_after"],
+    "Role-Based Interview": ["Greeting_after", "Personalised_after", "Technical_after", "Coding_after", "Project_after"],
 }
 
 
@@ -93,10 +95,11 @@ class InterviewAgentService:
         *,
         google_api_key: Optional[str] = None,
         tavily_api_key: Optional[str] = None,
+        role: Optional[str] = None,
     ):
         """
         Return the compiled workflow for the given interview type. Builds once per type
-        and caches; all graphs share the same checkpointer. Use config_for_session(session_id)
+        (per role for Role-Based Interview) and caches. Use config_for_session(session_id)
         when invoking so state is stored per session (thread_id).
         """
         if interview_type not in INTERVIEW_TYPES:
@@ -104,8 +107,10 @@ class InterviewAgentService:
                 f"Invalid interview_type: {interview_type}. Must be one of {INTERVIEW_TYPES}"
             )
 
-        if interview_type in self._graphs:
-            return self._graphs[interview_type]
+        # Role-Based Interview: cache key includes role so each role has its own graph
+        cache_key = f"{interview_type}:{role}" if interview_type == "Role-Based Interview" and role else interview_type
+        if cache_key in self._graphs:
+            return self._graphs[cache_key]
 
         google_key = google_api_key or os.getenv("GOOGLE_API_KEY", "")
         tavily_key = tavily_api_key or os.getenv("TAVILY_API_KEY", "")
@@ -114,7 +119,7 @@ class InterviewAgentService:
 
         checkpointer = self.get_checkpointer()
 
-        logger.info("Building interview graph (singleton): %s", interview_type)
+        logger.info("Building interview graph (singleton): %s", cache_key)
         if interview_type == "Technical":
             graph = get_technical_graph(google_key, tavily_key, checkpointer)
         elif interview_type == "HR":
@@ -125,10 +130,13 @@ class InterviewAgentService:
             graph = build_case_study_graph(google_key, checkpointer)
         elif interview_type == "Communication":
             graph = build_communication_graph(google_key, checkpointer)
+        elif interview_type == "Role-Based Interview":
+            role_val = role or "Frontend Development"
+            graph = get_role_based_graph(google_key, role_val, checkpointer)
         else:
             raise ValueError(f"Unknown interview type: {interview_type}")
 
-        self._graphs[interview_type] = graph
+        self._graphs[cache_key] = graph
         self._google_key = google_key
         self._tavily_key = tavily_key
         return graph

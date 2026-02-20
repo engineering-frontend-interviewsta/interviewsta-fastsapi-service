@@ -52,12 +52,22 @@ def get_llm(google_api_key: str):
 
 
 class InterviewProgress(BaseModel):
-    send_to_which_node: Literal['Greeting', 'Coding_before', 'Offensive'] = \
+    send_to_which_node: Literal['Greeting', 'Personalised_before', 'Offensive'] = \
         Field(description="Supervise the conversation to determine the next step. If the interviewer has "
-                          "outstanding questions or requires clarification, route the conversation to 'Greetings'. "
-                          "Otherwise, advance to 'Coding_before' where the interview would actually begin or coding "
-                          "question would be asked. Exceptionally, if the interviewee is being offensive or constantly"
-                          "not taking the interview serious, return 'Offensive'")
+                          "outstanding questions or requires clarification, route the conversation to 'Greeting'. "
+                          "Otherwise, if questions are answered or the candidate is ready, advance to 'Personalised_before' "
+                          "where we'll have a brief personalized conversation before the coding assessment begins. "
+                          "Exceptionally, if the interviewee is being offensive or constantly not taking the interview serious, return 'Offensive'")
+
+class PersonalisedProgress(BaseModel):
+    send_to_which_node: Literal['Personalised', 'Coding_before', 'Offensive'] = \
+        Field(description="Supervise the personalized conversation phase. Route to 'Personalised' if the conversation "
+                          "is still ongoing (less than 6-7 exchanges completed) and you're still getting to know the candidate. "
+                          "Route to 'Coding_before' ONLY when you've had approximately 6-7 good conversational exchanges "
+                          "about their name, background, education, interests, hobbies, and journey into tech, AND you've "
+                          "acknowledged what you've learned and asked if they're ready to begin the coding assessment, "
+                          "AND the candidate has confirmed they're ready (e.g., 'yes', 'ready', 'let's go', 'proceed', 'sure'). "
+                          "Exceptionally, if the interviewee is being offensive or constantly not taking the interview serious, return 'Offensive'")
 
 
 class CodingProgress(BaseModel):
@@ -73,16 +83,28 @@ class CodingProgress(BaseModel):
 
 
 coding_prompt = '''
-You are a technical interviewer conducting a live coding session. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
+You are a technical interviewer conducting a live coding session for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
 This means you should be polite, conversational, and encouraging, rather than robotic. The interview must strictly follow the structured flow outlined below.
+
+IMPORTANT: You are conducting an interview for {company}. Ask questions that are ACTUALLY asked in {company} interviews. This includes:
+- Theoretical/conceptual questions about programming fundamentals, data structures, algorithms, and system design concepts
+- Coding problems that are commonly asked at {company}
+- Questions should reflect {company}'s interview style and focus areas
 
 The interview flow is as follows:
 
-1. Present Coding Question
+1. Present Questions (Mix of Theoretical and Coding)
 
-You MUST ONLY ask the following questions -
+First, ask 1-2 theoretical/conceptual questions relevant to {company} interviews. These could be about:
+- Programming fundamentals (OOP concepts, data structures, algorithms)
+- System design basics (for senior roles)
+- Company-specific technologies or practices
+- Problem-solving approaches
+
+Then, present coding questions. Use the following as guidance:
 {questions}
-Dont disclose about this research, the topic and difficulty to user. Just present the code as is. If the candidate struggles to start, offer a simplified version of the problem to build their confidence.
+
+If the research provided is generic, generate authentic {company}-specific questions based on what is actually asked in {company} interviews. Don't disclose about this research, the topic and difficulty to user. Just present the questions as is. If the candidate struggles to start, offer a simplified version of the problem to build their confidence.
 
 Ask the candidate to explain the problem back to you in their own words to ensure they understand. Gently cross-question if there are any points of confusion.
 
@@ -103,24 +125,24 @@ Transition smoothly to the second problem and repeat the entire process from ste
 '''
 
 coding_prompt_temp = PromptTemplate(
-    input_variables=['questions'],
+    input_variables=['questions', 'company'],
     template=coding_prompt
 )
 
 company_greeting_prompt = '''
-Your name is Glee, SDE at {Company} and you have to act as an interviewer conducting a live interview session. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
+Your name is Glee, SDE at {Company} and you have to act as an interviewer conducting a live interview session for a Software Engineer position at {Company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
 
 Your instructions are:
 
 1. Start with a Warm Greeting: Begin with a friendly and personal greeting. Do not include any parenthetical actions, stage directions, or cues (e.g., laughing gently, sighs, smiles).
 
-2. Introduce Yourself: State your name and your role for the session (e.g., "I'll be your interviewer today").
+2. Introduce Yourself and the Role: State your name, your role at {Company}, and clearly mention that the candidate is interviewing for a Software Engineer position at {Company} (e.g., "I'll be your interviewer today for the Software Engineer role at {Company}").
 
-3. Explain the Format: Briefly outline what the candidate can expect. Mention that you'll be going through a couple of coding problems and that the focus is on their thought process and problem-solving approach, not just the final answer. Encourage them to think out loud.
+3. Explain the Format: Briefly outline what the candidate can expect. Mention that we'll start with a brief conversation to get to know them better, then you'll be going through a couple of coding problems and that the focus is on their thought process and problem-solving approach, not just the final answer. Encourage them to think out loud.
 
 4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
 
-5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of the interview.
+5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of the interview. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better before beginning the coding assessment.
 
 
 '''
@@ -134,13 +156,40 @@ Your instructions are:
 
 2. Introduce Yourself: State your name and your role for the session (e.g., "I'll be your interviewer today").
 
-3. Explain the Format: Briefly outline what the candidate can expect. Mention that you'll be going through a couple of coding problems and that the focus is on their thought process and problem-solving approach, not just the final answer. Encourage them to think out loud.
+3. Explain the Format: Briefly outline what the candidate can expect. Mention that we'll start with a brief conversation to get to know them better, then you'll be going through a couple of coding problems and that the focus is on their thought process and problem-solving approach, not just the final answer. Encourage them to think out loud.
 
 4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
 
-5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of interview.
+5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of interview. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better before beginning the coding assessment.
 
 
+'''
+
+coding_personalised_prompt = '''
+Your name is Glee and you have to act as an interviewer conducting a coding interview session. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally.
+Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold, italics texts or coding texts, as if you were speaking aloud.
+
+Your [INSTRUCTIONS] are:
+
+1. Engage in Personalized Conversation (approximately 6-7 exchanges): Initiate a natural, warm conversation to get to know the candidate better. Ask about:
+   - Their name (if not already mentioned)
+   - Their educational background (degree, university, major)
+   - Their interests and hobbies (what they enjoy doing outside of work/studies)
+   - Their background and journey into technology/computer science
+   - What motivates them or what they're passionate about in tech
+   - Any fun facts or interesting experiences they'd like to share
+
+2. Keep it Conversational: Make this feel like a natural conversation, not an interrogation. Show genuine interest in their responses and build rapport. Reference what they've shared in follow-up questions.
+
+3. Limit to 6-7 Exchanges: After approximately 6-7 conversational turns (your questions + their responses), acknowledge what you've learned about them and transition smoothly to the coding assessment.
+
+4. Transition Message: Once you've had enough exchanges (around 6-7), say something like: "Thank you for sharing that with me! I really enjoyed getting to know you better. Now, let's move on to the coding problems. Are you ready to begin?"
+
+IMPORTANT: 
+- Keep the conversation natural and flowing
+- Don't rush through questions
+- Show genuine interest in their responses
+- Make this phase feel warm and engaging, not robotic
 '''
 
 hr_greeting_prompt = '''
@@ -291,9 +340,35 @@ def make_search_tool(tavily_api_key: str, max_results: int = 5):
 
 
 def create_route_to_greeting(InterviewProgress_llm) -> Callable:
-    def _Node(state: S) -> Literal['Greeting', 'Coding_before']:
+    def _Node(state: S) -> Literal['Greeting', 'Personalised_before', 'Offensive']:
         response = InterviewProgress_llm.invoke(state["history"])
         print("This is the greeting routing node", response.send_to_which_node)
+        return response.send_to_which_node
+    return _Node
+
+def create_personalised_node(llm) -> Callable:
+    def _Node(state: S) -> S:
+        if state["LastNode"] != "Personalised":
+            # Set up the personalized conversation prompt
+            personalised_prompt = ChatPromptTemplate.from_messages([
+                ("system", coding_personalised_prompt)
+            ])
+            input_messages = personalised_prompt.format_messages()
+            state["messages"] = input_messages + state["messages"]
+            state["LastNode"] = "Personalised"
+        
+        response = llm.invoke(state["messages"])
+        state["messages"] = state["messages"] + [response]
+        state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
+        state["LastNode"] = "Personalised"
+        
+        return state
+    return _Node
+
+def create_route_to_personalised(PersonalisedProgress_llm) -> Callable:
+    def _Node(state: S) -> Literal['Personalised', 'Coding_before', 'Offensive']:
+        response = PersonalisedProgress_llm.invoke(state["history"])
+        print("This is the personalised routing node", response.send_to_which_node)
         return response.send_to_which_node
     return _Node
 
@@ -301,9 +376,29 @@ def create_route_to_greeting(InterviewProgress_llm) -> Callable:
 def create_greeting_node(interview_type, Greeting_llm) -> Callable:
   def _Node(state: S) -> S:
     if state["LastNode"] != "Greeting":
-      inp_company = getattr(state, "company", None)
-      inp_state = getattr(state, "subject", None)
-      greeting_prompt = get_greeting_prompt_template(interview_type, inp_company or inp_state)
+      # Access company/subject from state dictionary - use direct access like other nodes
+      if interview_type == "Company":
+        try:
+          inp_company = state["company"]
+          if not inp_company or inp_company == "None":
+            print(f"[WARNING] Company is None or empty in state. Using fallback.")
+            inp_company = "the company"
+        except KeyError:
+          print(f"[WARNING] 'company' key not found in state. Available keys: {list(state.keys())}")
+          inp_company = "the company"
+        print(f"[DEBUG] Company for greeting: {inp_company}")
+        greeting_prompt = get_greeting_prompt_template(interview_type, inp_company)
+      else:
+        try:
+          inp_state = state["subject"]
+          if not inp_state or inp_state == "None":
+            print(f"[WARNING] Subject is None or empty in state. Using fallback.")
+            inp_state = "the topic"
+        except KeyError:
+          print(f"[WARNING] 'subject' key not found in state. Available keys: {list(state.keys())}")
+          inp_state = "the topic"
+        print(f"[DEBUG] Subject for greeting: {inp_state}")
+        greeting_prompt = get_greeting_prompt_template(interview_type, inp_state)
       print(greeting_prompt.format_messages())
       input_ = greeting_prompt.format_messages() + [{"role":"human","content":"Start the interview now"}]
       state["messages"] = state["messages"] + input_
@@ -325,8 +420,13 @@ def create_coding_node(Coding_llm) -> Callable:
         # print("Coding chh aa gye assi")
 
         if state["LastNode"] != "Coding":
-            input_ = coding_prompt_template.format_messages(questions = state["QuestionResearch"])
-            state["messages"][0].content = coding_prompt_temp.format(questions = state["QuestionResearch"])
+            # Get company name if it's a company interview, otherwise use "the company"
+            company_name = state.get("company", "the company") if isinstance(state, dict) else (getattr(state, "company", "the company") if hasattr(state, "company") else "the company")
+            if not company_name or company_name == "None" or company_name == "":
+                company_name = "the company"
+            
+            input_ = coding_prompt_template.format_messages(questions = state["QuestionResearch"], company = company_name)
+            state["messages"][0].content = coding_prompt_temp.format(questions = state["QuestionResearch"], company = company_name)
         # print(state["messages"]
         # state["messages"] = state["messages"] + input_
 
@@ -433,6 +533,9 @@ def get_graph(input_type: str, google_api_key: str, tavily_api_key: str, checkpo
     workflow.add_node("Initial_Research", create_research_summary_node(llm))
     workflow.add_node("Greeting", create_greeting_node(input_type, llm))
     workflow.add_node("Greeting_after", create_dummy_node())
+    workflow.add_node("Personalised_before", create_dummy_node())
+    workflow.add_node("Personalised", create_personalised_node(llm))
+    workflow.add_node("Personalised_after", create_dummy_node())
     workflow.add_node("Coding_before", create_before_coding_node(llm))
     # workflow.add_node("Coding_before", create_questions_search_node(llm))
     workflow.add_node("Coding", create_coding_node(llm))
@@ -444,6 +547,8 @@ def get_graph(input_type: str, google_api_key: str, tavily_api_key: str, checkpo
 
     workflow.set_entry_point("Initial_Research")
     workflow.add_edge("Greeting", "Greeting_after")
+    workflow.add_edge("Personalised_before", "Personalised")
+    workflow.add_edge("Personalised", "Personalised_after")
     # workflow.add_edge("Greeting_after","Coding")
     # workflow.add_edge("Coding_before","Coding")
     workflow.add_edge("Initial_Research", "Greeting")
@@ -456,6 +561,8 @@ def get_graph(input_type: str, google_api_key: str, tavily_api_key: str, checkpo
     # workflow.add_edge("Coding_tool","Coding_before")
     workflow.add_conditional_edges("Greeting_after",
                                    create_route_to_greeting(llm.with_structured_output(InterviewProgress)))
+    workflow.add_conditional_edges("Personalised_after",
+                                   create_route_to_personalised(llm.with_structured_output(PersonalisedProgress)))
     workflow.add_conditional_edges("Coding_after", create_route_to_coding(llm.with_structured_output(CodingProgress)))
     agent = workflow.compile(checkpointer=checkpointer)
     print("In here")
