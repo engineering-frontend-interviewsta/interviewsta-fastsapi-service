@@ -2,16 +2,13 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, ToolMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
-from pydantic import BaseModel, Field, field_validator, ConfigDict, StringConstraints
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 from typing import Annotated, Literal, List, Callable, TypeVar
 from langgraph.checkpoint.memory import InMemorySaver
-# from pydantic import field_validator, Field,
-# from typing import List, Callable, TypeVar
 import inspect
 import operator
 import random
 import json
-
 
 
 COMMUNICATION_RAPPORT_PROMPT = '''
@@ -21,79 +18,104 @@ Respond in a single paragraph of plain-continuous text, without using special ch
 
 Your [INSTRUCTIONS] are:
 
-1. Engage with User Profile (2-3 exchanges MAX):
-    - If `[USER_PROFILE]` is largely empty or contains only basic info (like a default `UserProfile` object with all None values), *initiate a brief, natural conversation by asking about their name, background, hobbies or any fun facts (if not already discussed/disclosed) about themselves to get to know them better*.
-    - If `[USER_PROFILE]` contains existing `hobby` or `fun_facts`, briefly reference them and probe them on that to show you remember or ask for updates.
-    - Limit this engagement to a maximum of 2-3 conversational turns (interviewer + candidate responses).
+1. Build Rapport (2-3 exchanges MAX): Initiate a brief, natural conversation by asking about their name, background, hobbies or any fun facts about themselves to get to know them better. Limit this engagement to a maximum of 2-3 conversational turns (interviewer + candidate responses).
 
-2. ONLY ONCE THE EXCHANGES ARE COMPLETE!! Explain the Format: After the initial engagement, briefly outline what the candidate can expect. Mention that you'll be given a communication-interview problem with one phase on dictation, second on comprehension and final an MCQ based phase and that the focus is on their thought process and problem-solving approach, not just the final answer. Encourage them to think out loud.
+2. ONLY ONCE THE EXCHANGES ARE COMPLETE!! Explain the Format: After the initial engagement, briefly outline what the candidate can expect. Mention that you'll have a conversation about their hobbies and interests, then move to three assessment phases: speaking exercise, writing comprehension, and vocabulary MCQ. The focus is on their communication skills. Encourage them to do their best.
 
 3. Finally, Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
 
-[USER_PROFILE]-
-{user_profile}
-
+4. After questions are answered (or if no questions), say "Excellent, thank you for confirming. Let's start by having a conversation. First, could you please tell me your name? And then I'd love to hear about your hobbies and interests. This will help me get to know you better." Then begin by asking for their name first, followed by their hobbies and interests.
 '''
-
-# print("CASE_GREETING_PROMPT_2 created successfully.")
-
-# CASE_GREETING_PROMPT = """
-# Your name is Glee and you are conducting a case study interview.
-# Speak naturally and conversationally in one paragraph.
-
-# 1. Greet the candidate warmly.
-# 2. Introduce yourself.
-# 3. Explain this is a case interview focused on structured thinking.
-# 4. Encourage thinking aloud.
-# 5. Ask if they have any questions ONLY about the process.
-# """
 
 COMMUNICATION_GREETING_PROMPT = '''
 Your name is Glee and you have to act as an interviewer conducting a communication based live interview session AND SIMPLY FOLLOW [INSTRUCTIONS] WITHOUT ANY CROSS-QUESTIONS.
 Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally.
 Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
 
-[USER_PROFILE] (info on your past interactions and your assesment of user's likings/characteristics)-
-{user_profile}
-
 Your [INSTRUCTIONS] are:
 
-1. Start with a Warm Greeting: Begin with a friendly and personal greeting. If `[USER_PROFILE]` (info on your past interactions and your assesment of user's likings/characteristics) contains information about previous interactions (like `name`, `hobby`, `fun_facts`, `last_chats`), acknowledge it naturally to build rapport and prompt on further updates on it. Do not include any parenthetical actions, stage directions, or cues.
+1. Start with a Warm Greeting: Begin with a friendly and personal greeting. Do not include any parenthetical actions, stage directions, or cues.
 
-2. Conditionally Introduce Yourself: If `[USER_PROFILE]` (info on your past interactions and your assesment of user's likings/characteristics) indicates prior interaction, you may briefly reference it for continuity else State your name and your role for the session (e.g., "I'll be your interviewer today").
+2. Introduce Yourself: State your name and your role for the session (e.g., "I'll be your interviewer today").
 
-3. Conditionally Explain the Format: If `[USER_PROFILE]` indicates prior interaction, refrain from introduction and explanation on the format and show natural continuity from the state indicated in `[USER_PROFILE]` and ask probing questions on their interests,hobbies etc ELSE you can introduce yourself, explain the format and mention that you'll be liking to understand the person before beginning 
+3. Explain the Format: Briefly explain that this is a communication interview that will start with a conversation about their hobbies and interests, then assess their skills through speaking exercises, writing comprehension, and vocabulary MCQ exercises. Mention that the focus is on their communication skills and encourage them to do their best.
 
-
+4. Invite Questions: Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
 '''
 
-
-# 4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
-
-# 5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of the interview.
-COMMUNICATION_DICTATION_QUESTION_PROMPT = """
-You are an interviewer conducting a communication based live interview session AND SIMPLY FOLLOW [INSTRUCTIONS]
-Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally.
-Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
+COMMUNICATION_SPEAKING_QUESTION_PROMPT = """
+You are an interviewer conducting a communication based live interview session. Your role is to present a speaking exercise.
 
 Your [INSTRUCTIONS] are:
 
-1. Present the question: You must present a 30 word paragraph for the interviewee to dictate.
+1. Present the speaking paragraph: You must present a proper paragraph (50-80 words, 3-4 sentences) for the interviewee to speak. The paragraph should be meaningful, coherent, and appropriate for a speaking exercise.
 
-2. Invite the interviewee to think: Ask the interviewee to read and begin with dictation when ready.
+2. Give clear instruction: Simply say "Please read the following paragraph and speak it word for word" or "I'd like you to read the paragraph on screen and speak it back to me word for word." Then present the paragraph clearly in your response.
+
+IMPORTANT:
+- Do NOT read the paragraph aloud yourself. Just present it visually in your message.
+- Do NOT ask questions like "should I speak this?" or "do you want me to read this?".
+- Just say "Please read the following paragraph and speak it word for word:" and then include the paragraph text.
+"""
+COMMUNICATION_SPEAKING_FEEDBACK_PROMPT = """
+You are an interviewer providing feedback on a speaking exercise.
+
+The candidate was asked to speak this paragraph:
+{speaking_paragraph}
+
+The candidate's speaking (transcribed) was:
+{user_transcription}
+
+Provide brief, constructive feedback (2-3 sentences) on:
+1. Accuracy of the speaking compared to the original
+2. Any notable strengths or areas for improvement
+3. Encouragement to continue
+
+At the end of your feedback, you MUST ask a transition question using one of these exact phrases:
+- Are you ready to move on to the next exercise?
+- Shall we proceed to the writing comprehension phase?
+- Can we move to the next round?
+
+Keep it friendly and professional. Make sure to end with a question mark.
 """
 
+# Add similar prompt for comprehension
+COMMUNICATION_COMPREHENSION_FEEDBACK_PROMPT = """
+You are an interviewer providing feedback on a writing comprehension exercise.
+
+The candidate was asked to write 50-100 words on:
+{comprehension_question}
+
+The candidate's response was:
+{user_response}
+
+Provide brief, constructive feedback (2-3 sentences) on:
+1. Relevance to the scenario
+2. Writing quality and clarity
+3. Any notable strengths or areas for improvement
+4. Encouragement to continue
+
+At the end of your feedback, you MUST ask a transition question using one of these exact phrases:
+- Are you ready to move on to the next exercise?
+- Shall we proceed to the MCQ phase?
+- Can we move to the vocabulary exercise?
+
+Keep it friendly and professional. Make sure to end with a question mark.
+"""
+
+
 COMMUNICATION_WRITING_COMPREHENSION_QUESTION_PROMPT = """
-You are an interviewer conducting a communication based live interview session AND SIMPLY FOLLOW [INSTRUCTIONS]
-Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally.
-Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
+You are an interviewer conducting a communication based live interview session. Your role is to present a writing comprehension exercise.
 
 Your [INSTRUCTIONS] are:
 
-1. Present the question: You must present a situation/scenario on which the user has to write 50-100 words atleast.
+1. Present the writing task: You must present a clear situation/scenario on which the user has to write 50-100 words. The scenario should be meaningful and appropriate for a writing comprehension exercise.
 
-2. Invite the interviewee to think: Ask the interviewee to process and start writing.
+2. Give clear instruction: Simply present the scenario directly. Do NOT include "Please write 50-100 words on the following scenario:" in your response. Just present the scenario/question itself.
 
+IMPORTANT:
+- Do NOT ask questions like "should I read this?" or "do you want me to present this?".
+- Do NOT include instruction text like "Please write 50-100 words on the following scenario:" - just present the scenario/question directly.
 """
 
 COMMUNICATION_MCQS_QUESTION_PROMPT = """
@@ -105,17 +127,19 @@ Your [INSTRUCTIONS] are:
 
 1. Present the question: You must present a fill-in-the blanks MCQ question to test interviewee's vocabulary skills.
 
-2. Invite the interviewee to think: Ask the interviewee to choose the most suitable option from the lot.
+2. Provide exactly 4 options: List exactly 4 different word options to fill in the blank.
 
-3. You need to ask unique questions exactly 4 times.
+3. Specify the correct answer: In your structured response, you MUST include the "answer" field containing the EXACT correct option text from the 4 options you provided. This is critical for grading.
 
-[QUESTIONS_ASKED_ALREADY] - 
+4. Invite the interviewee to think: Ask the interviewee to choose the most suitable option from the lot.
+
+5. Track questions asked: You have asked {num_questions_asked} questions so far. You need to ask exactly 4 unique questions total.
+
+[QUESTIONS_ASKED_ALREADY] -
 {questions_asked_already}
 
-4. Sign-off the interview.
+6. Sign-off: If you have already asked 4 questions, thank the candidate warmly for participating, acknowledge their effort throughout the interview, and clearly state "This concludes our communication interview. Thank you so much for your time today." Do NOT ask another question if 4 have been asked.
 """
-
-
 
 CASE_END_PROMPT = """
 Thank the candidate for their time and clearly state that the case interview is now complete.
@@ -130,25 +154,9 @@ Politely but firmly end the interview.
 from pydantic import BaseModel, Field, conlist, constr
 from typing import Optional, List
 
-
-# StrictString = Annotated[str, StringConstraints(min_length=1)]
-
-class DictationEntity(BaseModel):
-    # Option A: Use Field arguments (Simplest/Recommended)
-    instruction: Optional[str] = Field(None, min_length=1, description="The instruction to be followed.")
-    paragraph: Optional[str] = Field(None, min_length=1, description="The 30 words paragraph.")
-
-class UserProfile(BaseModel):
-    # Option B: Use the StrictString Annotated type
-    name: Optional[str] = Field(None, description="Name of the interviewee.")
-    hobby: Optional[str] = Field(None, description="A hobby or interest.")
-    fun_facts: Optional[str] = Field(None, description="Interesting facts.")
-    last_chat: Optional[str] = Field(None, description="Summary of current chat.")
-    summary_of_previous_chats: Optional[str] = Field(None, description="Overall summary.")
-
-# class DictationEntity(BaseModel):
-#   instruction: Optional[constr(min_length=1)] = Field(None, description="The instruction to be followed during dictation.")
-#   paragraph: Optional[constr(min_length=1)] = Field(None, description="The 30 words paragraph to be dictated.")
+class SpeakingEntity(BaseModel):
+  instruction: Optional[str] = Field(None, description="The instruction to be followed during the speaking exercise.")
+  paragraph: Optional[str] = Field(None, description="The paragraph (50-80 words, 3-4 sentences) to be spoken by the candidate.")
 
 class WritingComprehensionEntity(BaseModel):
   instruction: Optional[str] = Field(None, description="The instruction to be followed during writing comprehension.")
@@ -157,23 +165,11 @@ class WritingComprehensionEntity(BaseModel):
 class MCQEntity(BaseModel):
   instruction: Optional[str] = Field(None, description="The instruction to be followed during solving MCQ.")
   question: Optional[str] = Field(None, description="Fill in the blank question to be asked.")
-  options: Optional[Annotated[List[str], Field(min_length=4, max_length=4)]] = Field(
+  options: Optional[List[str]] = Field(
         None, description="EXACTLY 4 Options to choose from."
     )
   answer: Optional[str] = Field(None, description="Correct answer to the question STRICTLY from options.")
-
-# class UserProfile(BaseModel):
-#     '''
-#       Based on the interaction history with the interviewee and previous snaphot of `UserProfile`, you may need to look to update the current 
-#       status of `UserProfile`, if no updates then return the fields as is in the original.
-#     '''
-#     name: Optional[constr(min_length=1)] = Field(None, description="Name of the interviewee.")
-#     hobby: Optional[constr(min_length=1)] = Field(None, description="A hobby or interest of the interviewee.")
-#     fun_facts: Optional[constr(min_length=1)] = Field(None, description="List of interesting facts about the interviewee.")
-#     last_chat: Optional[constr(min_length=1)] = Field(None, description="Summary of current chat topics or key points which becomes as last chat for next session.")
-#     summary_of_previous_chats: Optional[constr(min_length=1)] = Field(None, description="An overall summary of the interviewee's past interactions including current")
-
-# print("UserProfile schema created successfully.")
+  user_answer: Optional[str] = Field(None, description="User's selected answer for this question.")
 
 class CommunicationInterviewState(MessagesState):
   LastNode: Annotated[str, Field(default="")]
@@ -182,14 +178,12 @@ class CommunicationInterviewState(MessagesState):
 
   current_mcq_entity: Annotated[MCQEntity, Field(default_factory=MCQEntity)]
   current_writing_comprehension: Annotated[WritingComprehensionEntity, Field(default_factory=WritingComprehensionEntity)]
-  current_dictation: Annotated[DictationEntity, Field(default_factory=DictationEntity)]
+  current_speaking: Annotated[SpeakingEntity, Field(default_factory=SpeakingEntity)]
 
-  mcq_questions_asked: Annotated[List[MCQEntity], Field(default=[])]
+  mcq_questions_asked: Annotated[List[MCQEntity], Field(default_factory=list)]
+  pending_mcq_answer: Annotated[str, Field(default="")]  # Stores user's answer before next MCQ
 
   set_timer_on: Annotated[bool, Field(default=False)]
-
-  user_profile: Annotated[UserProfile, Field(default_factory=UserProfile)]
-
 
 
 class CommunicationGreetingRouting(BaseModel):
@@ -204,45 +198,77 @@ class CommunicationGreetingRouting(BaseModel):
   send_to_which_node: Literal["Greeting", "Rapport_before", "Offensive"]
 
 
-class CommunicationRapportRouting(BaseModel):
-  send_to_which_node: Literal["Rapport", "Dictation_before", "Offensive"] = \
-                        Field(description="Supervise the conversation during the rapport-building phase. Route to 'Rapport' if "
-                "rapport-building is still ongoing or clarification is needed. Route to 'Dictation_before' "
-                "if the rapport phase is concluded (all rapport exchanges are resolved, and the interviewer has"  
-                "explicitly signaled readiness to proceed). Route to 'Offensive' if the interviewee's behavior is inappropriate or unserious."
-                )
-                        
+COMMUNICATION_PERSONAL_DETAILS_PROMPT = '''
+Your name is Glee and you have to act as an interviewer conducting a communication based live interview session AND SIMPLY FOLLOW [INSTRUCTIONS] WITHOUT ANY CROSS-QUESTIONS.
+Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally.
+Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
 
-# "Supervise the conversation during the rapport-building phase. Route to 'Rapport' if "
-# "rapport-building is still ongoing or clarification is needed. Route to 'CaseStudy_before' "
-# "if the rapport phase is concluded (all rapport exchanges are resolved, and the interviewer has"  
-# "explicitly signaled readiness to proceed). Route to 'Offensive' if the interviewee's behavior is inappropriate or unserious."
+Your [INSTRUCTIONS] are:
+
+1. Engage in Natural Conversation: Have a natural, back-and-forth conversation with the candidate about their hobbies, interests, and background. Ask follow-up questions to show genuine interest.
+
+2. Topics to Cover: Ask about their name, where they're from, their hobbies, interests, favorite activities, any fun facts about themselves, or what they enjoy doing in their free time. Keep it conversational and friendly.
+
+3. Duration: Engage in 4-6 conversational exchanges (you ask, they respond, you follow up, etc.) to build a comfortable rapport and understand them better.
+
+4. Transition: After having a good conversation (4-6 exchanges), acknowledge what you've learned about them, then say "Thank you for sharing that with me. Now let's move on to the assessment phases. Are you ready to begin with the speaking exercise?" Wait for their confirmation.
+'''
+
+class CommunicationRapportRouting(BaseModel):
+  send_to_which_node: Literal["Rapport", "PersonalDetails_before", "Offensive"] = \
+                        Field(description="Supervise the conversation during the rapport-building phase. Route to 'Rapport' if "
+                "rapport-building is still ongoing, clarification is needed, OR if the interviewer is still explaining the format or answering questions. "
+                "Route to 'PersonalDetails_before' ONLY when the rapport phase is complete, questions are answered, and the interviewer "
+                "has indicated they want to start the conversation about hobbies and interests (e.g., 'let's start by having a conversation', "
+                "'let's talk about your hobbies', etc.). "
+                "Route to 'Offensive' if the interviewee's behavior is inappropriate or unserious."
+                )
+
+class CommunicationPersonalDetailsRouting(BaseModel):
+  send_to_which_node: Literal["PersonalDetails", "Speaking_before", "Offensive"] = \
+    Field(description=(
+        "Route to 'Speaking_before' if BOTH conditions are met: "
+        "1. The interviewer has asked the candidate if they are ready to begin the speaking exercise "
+        "(phrases like 'Are you ready to begin', 'ready to start', 'let's move on to the assessment'), AND "
+        "2. The candidate has confirmed they are ready (e.g., 'yes', 'yup', 'ready', 'sure', 'okay', 'let's go', 'please'). "
+        "\n\n"
+        "Route to 'PersonalDetails' ONLY if the conversation about hobbies/interests is still ongoing AND "
+        "the interviewer has NOT yet asked if the candidate is ready for the speaking exercise. "
+        "\n\n"
+        "Route to 'Offensive' if the interviewee's behavior is inappropriate or unserious."
+    ))
+
+
+class CommunicationSpeakingRouting(BaseModel):
+  send_to_which_node: Literal["Speaking", "Speaking_feedback", "Offensive"] = \
+                        Field(description="Supervise the conversation during the speaking phase. Route to 'Speaking' ONLY if "
+                "the speaking exercise has NOT been presented yet (no current_speaking paragraph exists) OR the interviewee "
+                "hasn't submitted their speaking yet. "
+                "Route to 'Speaking_feedback' if the paragraph HAS been presented by the interviewee and now it's time to provide feedback. "
+                "Route to 'Offensive' if the interviewee's behavior is inappropriate or unserious."
+                )
+
+class CommunicationComprehensionRouting(BaseModel):
+  send_to_which_node: Literal["Comprehension", "Comprehension_feedback", "Offensive"] = \
+                        Field(description="Supervise the conversation during the comprehension phase. "
+                "Route to 'Comprehension' ONLY if the writing comprehension exercise has NOT been presented yet "
+                "(no current_writing_comprehension exists) OR the interviewee hasn't submitted their written response yet. "
+                "Route to 'Comprehension_feedback' if the comprehension question HAS been presented AND the interviewee "
+                "has now submitted their written response — it's time to provide feedback on their writing. "
+                "Route to 'Offensive' if the interviewee's behavior is inappropriate or unserious."
+                )
+
 
 class CommunicationMCQRouting(BaseModel):
   send_to_which_node: Literal["MCQ", "End", "Offensive"] = \
                       Field(description=(
-                          "Supervise the conversation to determine the next step. If the communication interview MCQ-Phase is "
-                          "still in progress, route to 'MCQ'. "
-                          "The MCQ phase is considered concluded only after the interviewer has asked the MCQ question exactly 4 questions and "
-                          "the interviewer has EXPLICITLY SIGNED OFF. This count does not include "
-                          "any follow-up discussions such as cross-questions, modifications to the original "
-                          "problem, or edge case analysis. If the interview has concluded, route to 'End'. "
-                          "Exceptionally, if the interviewee is being offensive or constantly "
-                          "not taking the interview serious, return 'Offensive'."
+                          "Supervise the conversation to determine the next step. "
+                          "Route to 'MCQ' ONLY if the interviewer is still asking MCQ questions and hasn't signed off yet. "
+                          "Route to 'End' if ANY of the following are true: "
+                          "1. The interviewer has EXPLICITLY stated the interview is concluded/finished/over (e.g., 'This concludes', 'Thank you for your time', 'interview is complete'), OR "
+                          "2. The interviewer has clearly signed off with phrases like 'Thanks for participating', 'That wraps up', 'We're all done'. "
+                          "Route to 'Offensive' if the interviewee is being offensive or not taking the interview seriously."
                       ))
-                        
-  
-
-# class CaseStudyFinishRouting(BaseModel):
-#   send_to_which_node: Literal["CaseDiscussion", "End", "Offensive"] = \
-#                         Field(description="Supervise the conversation to determine the next step. If the coding interview is "
-#                           "still in progress, route to 'CaseDiscussion'."
-#                           "The interview is considered concluded only after the discussion on the given case is considered"
-#                           "resolved and the interviewer has EXPLICITLY SIGNED OFF. This count does not include "
-#                           "any follow-up discussions such as cross-questions, modifications to the original. "
-#                           "If the interview has concluded, route to 'End'."
-#                           "problem, or edge case analysis. Exceptionally, if the interviewee is being offensive or constantly"
-#                           "not taking the interview serious, return 'Offensive'")
 
 
 
@@ -252,40 +278,202 @@ def create_rapport_node(llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
     if state["LastNode"] != "Rapport":
       print("Hereee in rapport")
-      # rapport_prompt = ChatPromptTemplate.from_messages([
-      #     ("system", RAPPORT_PROMPT.format(user_profile=state["user_profile"].model_dump_json()))
-      # ])
-      # input_messages = rapport_prompt.format_messages()
-      state["messages"][0].content = COMMUNICATION_RAPPORT_PROMPT.format(user_profile=state["user_profile"].model_dump_json())
+      rapport_prompt = ChatPromptTemplate.from_messages([
+          ("system", COMMUNICATION_RAPPORT_PROMPT)
+      ])
+      input_messages = rapport_prompt.format_messages()
+      state["messages"] = input_messages + state["messages"]
       state["LastNode"] = "Rapport"
 
     response = llm.invoke(state["messages"])
     state["messages"] = state["messages"] + [response]
     state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
     state["LastNode"] = "Rapport"
-    
-    print("Whatttt the fuckkk")
+
+    # print("Whatttt the fuckkk")
 
     return state
   return _Node
 
-# print("create_rapport_node function defined successfully.")
 
 from typing import Callable, Literal
 
 def create_route_to_rapport_node(llm) -> Callable:
-  def _Node(state: CommunicationInterviewState) -> Literal["Rapport", "Dictation_before", "Offensive"]:
+  def _Node(state: CommunicationInterviewState) -> Literal["Rapport", "PersonalDetails_before", "Offensive"]:
     print("Here in route to rapport")
-    response = llm.invoke(state["history"])
+    # Safely get history - handle None or empty
+    history = state.get("history", "") or ""
+    response = llm.invoke(history)
     print("RapportRouting response:", response)
+    if response is None:
+        print("[ERROR] Routing response is None, defaulting to Rapport")
+        return "Rapport"
     return response.send_to_which_node
   return _Node
 
-# print("create_route_to_rapport_node function defined successfully.")
+def create_route_to_personal_details_node(llm) -> Callable:
+  def _Node(state: CommunicationInterviewState) -> Literal["PersonalDetails", "Speaking_before", "Offensive"]:
+    print("Here in route to personal details/speaking")
+    # Safely get history - handle None or empty
+    history = state.get("history", "") or ""
+    response = llm.invoke(history)
+    print("PersonalDetailsRouting response:", response)
+    if response is None:
+        print("[ERROR] PersonalDetails routing response is None, defaulting to PersonalDetails")
+        return "PersonalDetails"
+    return response.send_to_which_node
+  return _Node
+
+def create_route_to_speaking_node(llm) -> Callable:
+  def _Node(state: CommunicationInterviewState) -> Literal["Speaking", "Speaking_feedback", "Offensive"]:
+    print("Here in route to speaking/comprehension")
+    # Safely get history - handle None or empty
+    history = state.get("history", "") or ""
+    response = llm.invoke(history)
+    print("SpeakingRouting response:", response)
+    if response is None:
+        print("[ERROR] Speaking routing response is None, defaulting to Speaking")
+        return "Speaking"
+    # Ensure we return the correct node name
+    node_name = response.send_to_which_node
+    # If routing says to go to Comprehension, route to Comprehension_before instead
+    if node_name == "Comprehension":
+        print("[INFO] Routing to Comprehension_before instead of Comprehension")
+        return "Comprehension_before"
+    return node_name
+  return _Node
+
+def create_route_to_comprehension_node(llm) -> Callable:
+  def _Node(state: CommunicationInterviewState) -> Literal["Comprehension", "Comprehension_feedback", "Offensive"]:
+    print("Here in route to comprehension/feedback")
+    # Safely get history - handle None or empty
+    history = state.get("history", "") or ""
+    response = llm.invoke(history)
+    print("ComprehensionRouting response:", response)
+    if response is None:
+        print("[ERROR] Comprehension routing response is None, defaulting to Comprehension")
+        return "Comprehension"
+    return response.send_to_which_node
+  return _Node
+
+def create_speaking_feedback_node(llm) -> Callable:
+  def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
+    print("[INFO] Generating speaking feedback")
+
+    # Get speaking paragraph and user transcription
+    speaking_data = state.get("current_speaking")
+    if isinstance(speaking_data, dict):
+        speaking_paragraph = speaking_data.get("paragraph", "")
+    else:
+        speaking_paragraph = getattr(speaking_data, "paragraph", "") if speaking_data else ""
+
+    # Get user's transcription from last message
+    messages = state.get("messages", [])
+    user_transcription = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            user_transcription = msg.content
+            break
+
+    # Generate acknowledgment
+    acknowledgment = "Great! I have received your speaking. Let me analyze it and provide some feedback."
+
+    # Generate feedback
+    feedback_prompt = COMMUNICATION_SPEAKING_FEEDBACK_PROMPT.format(
+        speaking_paragraph=speaking_paragraph,
+        user_transcription=user_transcription
+    )
+
+    feedback_response = llm.invoke(feedback_prompt)
+    feedback_text = feedback_response.content if hasattr(feedback_response, 'content') else str(feedback_response)
+
+    # Combine acknowledgment + feedback
+    full_response = f"{acknowledgment}\n\n{feedback_text}"
+
+    state["messages"] = state["messages"] + [AIMessage(content=full_response)]
+    state["history"] = state["history"] + "\n" + "Interviewer-" + full_response
+    state["LastNode"] = "Speaking_feedback"
+
+    return state
+  return _Node
+
+
+def create_comprehension_feedback_node(llm) -> Callable:
+  def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
+    print("[INFO] Generating comprehension feedback")
+
+    # Get comprehension question
+    comp_data = state.get("current_writing_comprehension")
+    if isinstance(comp_data, dict):
+        comp_question = comp_data.get("question", "")
+    else:
+        comp_question = getattr(comp_data, "question", "") if comp_data else ""
+
+    # Get user's response from last message
+    messages = state.get("messages", [])
+    user_response = ""
+    for msg in reversed(messages):
+        if isinstance(msg, HumanMessage):
+            user_response = msg.content
+            break
+
+    # Generate acknowledgment
+    acknowledgment = "Great! I have received your written response. Let me analyze it and provide some feedback."
+
+    # Generate feedback
+    feedback_prompt = COMMUNICATION_COMPREHENSION_FEEDBACK_PROMPT.format(
+        comprehension_question=comp_question,
+        user_response=user_response
+    )
+
+    feedback_response = llm.invoke(feedback_prompt)
+    feedback_text = feedback_response.content if hasattr(feedback_response, 'content') else str(feedback_response)
+
+    # Combine acknowledgment + feedback
+    full_response = f"{acknowledgment}\n\n{feedback_text}"
+
+    state["messages"] = state["messages"] + [AIMessage(content=full_response)]
+    state["history"] = state["history"] + "\n" + "Interviewer-" + full_response
+    state["LastNode"] = "Comprehension_feedback"
+
+    return state
+  return _Node
 
 
 def create_dummy_node() -> Callable:
   def _Node(state):
+    return state
+  return _Node
+
+def create_mcq_after_node() -> Callable:
+  """Node that processes user's MCQ answer and stores it with the question"""
+  def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
+    state["LastNode"] = "MCQ_after"
+
+    # Get the pending answer (set by consumers.py when user submits)
+    pending_answer = state.get("pending_mcq_answer", "")
+    mcq_questions = state.get("mcq_questions_asked", [])
+
+    print(f"[MCQ_AFTER] Processing: pending_answer='{pending_answer}', total_questions={len(mcq_questions)}")
+
+    if pending_answer and len(mcq_questions) > 0:
+      # Store user's answer with the last MCQ question
+      last_mcq_index = len(mcq_questions) - 1
+      last_mcq = mcq_questions[last_mcq_index]
+
+      # Update the last MCQ with user's answer
+      if last_mcq:
+        last_mcq.user_answer = pending_answer
+        state["mcq_questions_asked"][last_mcq_index] = last_mcq
+        print(f"[MCQ_AFTER] ✅ Stored user answer for question {last_mcq_index + 1}/{len(mcq_questions)}: '{pending_answer}'")
+      else:
+        print(f"[MCQ_AFTER] ⚠️ Last MCQ is None, cannot store answer")
+
+      # Clear pending answer
+      state["pending_mcq_answer"] = ""
+    else:
+      print(f"[MCQ_AFTER] ⚠️ No pending answer or no questions asked yet")
+
     return state
   return _Node
 
@@ -300,17 +488,12 @@ def get_llm(api_key: str):
 def create_greeting_node(Greeting_llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
     if state["LastNode"] != "Greeting":
-      inp_company = getattr(state, "company", None)
-      inp_state = getattr(state, "subject", None)
-      # greeting_prompt = get_greeting_prompt_template(interview_type, inp_company or inp_state)
-      # print(greeting_prompt.format_messages())
       greeting_prompt = ChatPromptTemplate.from_messages([
-          ("system", COMMUNICATION_GREETING_PROMPT.format(user_profile=state["user_profile"])),
-      # ("human", "{input}")
+          ("system", COMMUNICATION_GREETING_PROMPT),
       ])
-      input_ = greeting_prompt.format_messages() + [{"role":"human","content":"Start"}]
+      input_ = greeting_prompt.format_messages() + [{"role":"human","content":"Start the interview now"}]
       state["messages"] = state["messages"] + input_
-
+      state["LastNode"] = "Greeting"
 
     response = Greeting_llm.invoke(state["messages"])
 
@@ -318,109 +501,142 @@ def create_greeting_node(Greeting_llm) -> Callable:
     state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
     state["LastNode"] = "Greeting"
 
-    # print("We are delivering greetings-->",response)
     return state
   return _Node
 
 
-def create_greeting_node(Greeting_llm) -> Callable:
+def create_personal_details_node(llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
-    if state["LastNode"] != "Greeting":
-      inp_company = getattr(state, "company", None)
-      inp_state = getattr(state, "subject", None)
-      # greeting_prompt = get_greeting_prompt_template(interview_type, inp_company or inp_state)
-      # print(greeting_prompt.format_messages())
-      greeting_prompt = ChatPromptTemplate.from_messages([
-          ("system", COMMUNICATION_GREETING_PROMPT.format(user_profile=state["user_profile"])),
-      # ("human", "{input}")
+    if state["LastNode"] != "PersonalDetails":
+      print("Hereee in personal details")
+      personal_details_prompt = ChatPromptTemplate.from_messages([
+          ("system", COMMUNICATION_PERSONAL_DETAILS_PROMPT)
       ])
-      input_ = greeting_prompt.format_messages() + [{"role":"human","content":"Start"}]
-      state["messages"] = state["messages"] + input_
+      input_messages = personal_details_prompt.format_messages()
+      state["messages"] = input_messages + state["messages"]
+      state["LastNode"] = "PersonalDetails"
 
-
-    response = Greeting_llm.invoke(state["messages"])
-
+    response = llm.invoke(state["messages"])
     state["messages"] = state["messages"] + [response]
     state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
-    state["LastNode"] = "Greeting"
-
-    # print("We are delivering greetings-->",response)
-    return state
-  return _Node
-
-def create_dictation_node(llm) -> Callable:
-  def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
-    if state["LastNode"] != "Dictation":
-      state["messages"][0].content = COMMUNICATION_DICTATION_QUESTION_PROMPT
-      state["LastNode"] = "Dictation"
-
-
-    response = llm.invoke(state["messages"])
-
-    response_str = f"{response.instruction} \n\n {response.paragraph}"
-
-    state["messages"] = state["messages"] + [AIMessage(content = response_str)]
-    state["history"] = state["history"] + "\n" + "Interviewer-" + response_str
-    state["current_dictation"] = response
-    
+    state["LastNode"] = "PersonalDetails"
 
     return state
   return _Node
 
-# def create_route_to_dictation(InterviewProgress_llm) -> Callable:
-#   def _Node(state:CommunicationInterviewState) -> Literal['Dictation', 'Comprehension_before', 'Offensive']:
-#     # print("Hereee in route to greeting")
-#     response = InterviewProgress_llm.invoke(state["history"])
-#     print("This is the response", response)
-#     # if response.send_to_which_node == 'Greeting':
-#     #   state["current_query"] = state["messages"][-1].content
-
-#     return response.send_to_which_node
-#   return _Node
-
-
-def create_dictation_before_node(llm) -> Callable:
+def create_personal_details_before_node(llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
-    Rapport_llm = llm.with_structured_output(UserProfile)
-    response = Rapport_llm.invoke(f"Given the interaction history - {state['history']} and previous snapshot of UserProfile - {state['user_profile'].model_dump_json()}")
-    state["user_profile"] = response
+    # This node is a pass-through before starting personal details conversation
+    state["LastNode"] = "PersonalDetails_before"
+    return state
+  return _Node
+
+def create_speaking_before_node(llm) -> Callable:
+  def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
+    # This node sends a confirmation message before starting speaking exercise
+    from langchain_core.messages import AIMessage
+    confirmation_message = "Great! Let's begin with the speaking exercise."
+    state["messages"] = state["messages"] + [AIMessage(content=confirmation_message)]
+    state["history"] = state["history"] + "\n" + "Interviewer-" + confirmation_message
+    print("[INFO] Speaking_before: Confirmation sent, proceeding to Speaking")
     return state
   return _Node
 
 
-def create_dictation_node(llm) -> Callable:
+def create_speaking_node(llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
-    if state["LastNode"] != "Dictation":
-      state["messages"][0].content = COMMUNICATION_DICTATION_QUESTION_PROMPT
-      state["LastNode"] = "Dictation"
+    # Only generate new speaking exercise if we haven't already done so
+    # Check if we already have current_speaking set with a paragraph
+    has_speaking = False
+    if state.get("current_speaking"):
+        if isinstance(state["current_speaking"], dict):
+            has_speaking = bool(state["current_speaking"].get("paragraph"))
+        elif hasattr(state["current_speaking"], "paragraph"):
+            has_speaking = bool(state["current_speaking"].paragraph)
 
+    # IMPORTANT: If we're at Speaking_after, we've already completed speaking and given feedback
+    # Don't regenerate - this means routing should have sent us to Comprehension
+    if state.get("LastNode") == "Speaking_after":
+        print("[INFO] Already at Speaking_after - should route to Comprehension, not regenerate speaking")
+        return state
 
-    response = llm.invoke(state["messages"])
+    if state["LastNode"] != "Speaking" or not has_speaking:
+      # Set up the prompt for speaking
+      if len(state["messages"]) > 0:
+        state["messages"][0].content = COMMUNICATION_SPEAKING_QUESTION_PROMPT
+      else:
+        # If no messages, create a system message
+        from langchain_core.messages import SystemMessage
+        state["messages"] = [SystemMessage(content=COMMUNICATION_SPEAKING_QUESTION_PROMPT)]
+      state["LastNode"] = "Speaking"
 
-    response_str = f"{response.instruction} \n\n {response.paragraph}"
+      response = llm.invoke(state["messages"])
 
-    state["messages"] = state["messages"] + [AIMessage(content = response_str)]
-    state["history"] = state["history"] + "\n" + "Interviewer-" + response_str
-    state["current_dictation"] = response
-    
+      # Validate response before using it
+      if response is None:
+          raise ValueError("Speaking response from LLM is None")
 
+      # Safely build response string - format it clearly for speaking
+      instruction = response.instruction if response.instruction else "Please read the following paragraph and speak it word for word:"
+      paragraph = response.paragraph if response.paragraph else ""
+
+      # Format the response clearly - instruction first, then paragraph
+      # IMPORTANT: Don't read the paragraph aloud, just present it visually
+      if paragraph:
+          response_str = f"{instruction}\n\n{paragraph}"
+      else:
+          response_str = instruction
+
+      state["messages"] = state["messages"] + [AIMessage(content = response_str)]
+      state["history"] = state["history"] + "\n" + "Interviewer-" + response_str
+      state["current_speaking"] = response
+    else:
+      # Already have speaking exercise, don't regenerate - just pass through
+      print("[INFO] Speaking exercise already generated, skipping regeneration")
+
+    return state
+  return _Node
+
+def create_comprehension_before_node(llm) -> Callable:
+  def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
+    # This node sends a transition message before starting comprehension
+    from langchain_core.messages import AIMessage
+    transition_message = "Excellent! Now let's move on to the next exercise, which is the writing comprehension phase."
+    state["messages"] = state["messages"] + [AIMessage(content=transition_message)]
+    state["history"] = state["history"] + "\n" + "Interviewer-" + transition_message
+    state["LastNode"] = "Comprehension_before"
+    print("[INFO] Comprehension_before: Transition message sent, proceeding to Comprehension")
     return state
   return _Node
 
 def create_comprehension_node(llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
     if state["LastNode"] != "Comprehension":
-      state["messages"][0].content = COMMUNICATION_WRITING_COMPREHENSION_QUESTION_PROMPT
+      # Set up the prompt for comprehension
+      if len(state["messages"]) > 0:
+        state["messages"][0].content = COMMUNICATION_WRITING_COMPREHENSION_QUESTION_PROMPT
+      else:
+        # If no messages, create a system message
+        from langchain_core.messages import SystemMessage
+        state["messages"] = [SystemMessage(content=COMMUNICATION_WRITING_COMPREHENSION_QUESTION_PROMPT)]
       state["LastNode"] = "Comprehension"
 
 
     response = llm.invoke(state["messages"])
 
-    response_str = f"{response.instruction} \n\n {response.question}"
+    # Validate response before using it
+    if response is None:
+        raise ValueError("Comprehension response from LLM is None")
+
+    # Safely build response string
+    # Don't include instruction in the message - just the question/scenario
+    question = response.question if response.question else ""
+    # Use question directly, no instruction prefix
+    response_str = question
 
     state["messages"] = state["messages"] + [AIMessage(content = response_str)]
     state["history"] = state["history"] + "\n" + "Interviewer-" + response_str
-    state["current_comprehension"] = response
+    state["current_writing_comprehension"] = response
 
     return state
   return _Node
@@ -430,50 +646,141 @@ def create_mcq_node(llm) -> Callable:
     if state["LastNode"] != "MCQ":
       state["LastNode"] = "MCQ"
 
-    state["messages"][0].content = COMMUNICATION_MCQS_QUESTION_PROMPT.format(questions_asked_already = json.dumps([mcq.model_dump() for mcq in state["mcq_questions_asked"]]))
+    # Defensive: Initialize mcq_questions_asked if it doesn't exist (checkpoint compatibility)
+    if "mcq_questions_asked" not in state or state.get("mcq_questions_asked") is None:
+        print("[INFO] MCQ node: Initializing mcq_questions_asked as empty list")
+        state["mcq_questions_asked"] = []
+
+    # CRITICAL SAFETY CHECK: Prevent generating more than 4 questions
+    current_count = len([q for q in state.get("mcq_questions_asked", []) if q is not None])
+    if current_count >= 4:
+        print(f"[MCQ] ⚠️ SAFETY CHECK: Already have {current_count} questions, NOT generating another one!")
+        return state  # Return immediately without generating a new question
+
+    # Safely serialize MCQ questions, filtering out None values and handling errors
+    try:
+      mcq_list = []
+      for mcq in state.get("mcq_questions_asked", []):
+        if mcq is not None:
+          try:
+            mcq_list.append(mcq.model_dump())
+          except Exception as e:
+            print(f"[WARNING] Error serializing MCQ: {e}")
+            continue
+      num_questions = len(mcq_list)
+      print(f"[MCQ] Currently asked {num_questions} questions")
+      mcq_prompt_content = COMMUNICATION_MCQS_QUESTION_PROMPT.format(
+          questions_asked_already=json.dumps(mcq_list),
+          num_questions_asked=num_questions
+      )
+    except Exception as e:
+      print(f"[ERROR] Error processing MCQ questions list: {e}")
+      mcq_prompt_content = COMMUNICATION_MCQS_QUESTION_PROMPT.format(
+          questions_asked_already=json.dumps([]),
+          num_questions_asked=0
+      )
+
+    # Set up the prompt for MCQ
+    if len(state["messages"]) > 0:
+      state["messages"][0].content = mcq_prompt_content
+    else:
+      # If no messages, create a system message
+      from langchain_core.messages import SystemMessage
+      state["messages"] = [SystemMessage(content=mcq_prompt_content)]
 
     response = llm.invoke(state["messages"])
-    state["mcq_questions_asked"] = state["mcq_questions_asked"] + [response]
-    # Assuming response.options is a list of strings
-    options_list = [f"{i}) {val}" for i, val in enumerate(response.options)]
-    options_str = "\n".join(options_list)
 
-    response_str = f"{response.instruction}\n\n{response.question}\n\n{options_str}"
+    # Validate response before using it
+    if response is None:
+        raise ValueError("MCQ response from LLM is None")
+
+    # Log the correct answer for debugging
+    if response.answer:
+        print(f"[MCQ] Question generated with correct answer: '{response.answer}'")
+    else:
+        print("[WARNING] MCQ question generated WITHOUT correct answer!")
+
+    state["mcq_questions_asked"] = state["mcq_questions_asked"] + [response]
+
+    # Safely handle options - check if response has options and they're not None
+    if response.options and len(response.options) > 0:
+        options_list = [f"{i+1}) {val}" for i, val in enumerate(response.options)]
+        options_str = "\n".join(options_list)
+    else:
+        options_str = "No options provided"
+        print("[WARNING] MCQ response has no options")
+
+    # Safely build response string with None checks
+    instruction = response.instruction if response.instruction else ""
+    question = response.question if response.question else ""
+    response_str = f"{instruction}\n\n{question}\n\n{options_str}"
 
     state["messages"] = state["messages"] + [AIMessage(content = response_str)]
     state["history"] = state["history"] + "\n" + "Interviewer-" + response_str
-    state["current_mcq"] = response
+    state["current_mcq_entity"] = response
 
     return state
   return _Node
 
 def create_route_to_mcq_node(llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> Literal['MCQ', 'End', 'Offensive']:
-    print("Hereee in the MCQ routing nodeeee")
-    response = llm.invoke(state["history"])
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("[MCQ_ROUTING] 🔀 Entering MCQ routing node")
+
+    # SAFETY CHECK: Force end after 4 questions to prevent infinite loop
+    mcq_questions = state.get("mcq_questions_asked", [])
+    num_questions = len([q for q in mcq_questions if q is not None])
+    print(f"[MCQ_ROUTING] 📊 Number of questions asked: {num_questions}")
+    print(f"[MCQ_ROUTING] 📋 Questions list length: {len(mcq_questions)}")
+
+    if num_questions >= 4:
+        print("[MCQ_ROUTING] ✅ 4 questions completed - forcing END")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        return "End"
+
+    print(f"[MCQ_ROUTING] ⏭️  Only {num_questions} questions so far, asking LLM for routing decision")
+
+    # Safely get history - handle None or empty
+    history = state.get("history", "") or ""
+    response = llm.invoke(history)
+    if response is None:
+        print("[ERROR] MCQ routing response is None, defaulting to MCQ")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        return "MCQ"
+
+    print(f"[MCQ_ROUTING] 🤖 LLM decided: {response.send_to_which_node}")
+
+    # Double-check: even if LLM says MCQ, force End if we have 4 questions
+    if response.send_to_which_node == "MCQ" and num_questions >= 4:
+        print("[MCQ_ROUTING] ⚠️  LLM said MCQ but we have 4 questions - forcing END")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        return "End"
+
+    print(f"[MCQ_ROUTING] ➡️  Final decision: {response.send_to_which_node}")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     return response.send_to_which_node
   return _Node
 
 def create_route_to_greeting(InterviewProgress_llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> Literal['Greeting', 'Rapport_before', 'Offensive']:
     print("Hereee in route to greeting")
-    response = InterviewProgress_llm.invoke(state["history"])
+    # Safely get history - handle None or empty
+    history = state.get("history", "") or ""
+    response = InterviewProgress_llm.invoke(history)
     print("This is the response", response)
-    # if response.send_to_which_node == 'Greeting':
-    #   state["current_query"] = state["messages"][-1].content
-
+    if response is None:
+        print("[ERROR] Greeting routing response is None, defaulting to Rapport_before")
+        return "Rapport_before"
     return response.send_to_which_node
   return _Node
 
-def build_communication_graph(google_api_key: str, checkpointer: str):
+def build_communication_graph(google_api_key: str, checkpointer):
     llm = get_llm(google_api_key)
-
-    # checkpointer = InMemorySaver()
 
     workflow = StateGraph(CommunicationInterviewState)
 
     comprehension_llm = llm.with_structured_output(WritingComprehensionEntity)
-    dictation_llm = llm.with_structured_output(DictationEntity)
+    speaking_llm = llm.with_structured_output(SpeakingEntity)
     mcq_llm = llm.with_structured_output(MCQEntity)
 
     workflow.add_node("Greeting", create_greeting_node(llm))
@@ -482,37 +789,45 @@ def build_communication_graph(google_api_key: str, checkpointer: str):
     workflow.add_node("Rapport_before", create_dummy_node())
     workflow.add_node("Rapport", create_rapport_node(llm))
     workflow.add_node("Rapport_after", create_dummy_node())
-    workflow.add_node("Dictation_before", create_dictation_before_node(llm))
-    workflow.add_node("Dictation", create_dictation_node(dictation_llm))
-    workflow.add_node("Dictation_after", create_dummy_node())
+    workflow.add_node("PersonalDetails_before", create_personal_details_before_node(llm))
+    workflow.add_node("PersonalDetails", create_personal_details_node(llm))
+    workflow.add_node("PersonalDetails_after", create_dummy_node())
+    workflow.add_node("Speaking_before", create_speaking_before_node(llm))
+    workflow.add_node("Speaking", create_speaking_node(speaking_llm))
+    workflow.add_node("Speaking_after", create_dummy_node())
+    workflow.add_node("Speaking_feedback", create_speaking_feedback_node(llm))
+    workflow.add_node("Speaking_feedback_after", create_dummy_node())
+    workflow.add_node("Comprehension_before", create_comprehension_before_node(llm))
     workflow.add_node("Comprehension", create_comprehension_node(comprehension_llm))
     workflow.add_node("Comprehension_after", create_dummy_node())
+    workflow.add_node("Comprehension_feedback", create_comprehension_feedback_node(llm))
+    workflow.add_node("Comprehension_feedback_after", create_dummy_node())
     workflow.add_node("MCQ", create_mcq_node(mcq_llm))
-    workflow.add_node("MCQ_after", create_dummy_node())
+    workflow.add_node("MCQ_after", create_mcq_after_node())
     workflow.add_node("End", create_dummy_node())
-    # workflow.add_node("End", create_dummy_node())
-    # workflow.add_node("PickCase", pick_case_node())
-    # workflow.add_node("CaseDiscussion", case_discussion_node(llm))
-    # workflow.add_node("End", end_node(llm))
-    # workflow.add_node("Offensive", offensive_node(llm))
-
-
-    # workflow.add_node("CaseStudy_before", create_dummy_node())
 
     workflow.set_entry_point("Greeting")
 
     workflow.add_edge("Greeting", "Greeting_after")
-    # workflow.add_edge("GreetingQuery", "GreetingQueryTool")
-    # workflow.add_edge("GreetingQueryTool", "Greeting")
     workflow.add_edge("Rapport_before", "Rapport")
     workflow.add_edge("Rapport", "Rapport_after")
-    workflow.add_edge("Dictation_before", "Dictation")
-    workflow.add_edge("Dictation", "Dictation_after")
-    workflow.add_edge("Dictation_after", "Comprehension")
+    workflow.add_edge("PersonalDetails_before", "PersonalDetails")
+    workflow.add_edge("PersonalDetails", "PersonalDetails_after")
+    # Speaking_before will send a confirmation message, then go to Speaking
+    workflow.add_edge("Speaking_before", "Speaking")
+    workflow.add_edge("Speaking", "Speaking_after")
+
+    workflow.add_edge("Speaking_feedback", "Speaking_feedback_after")
+    workflow.add_edge("Speaking_feedback_after", "Comprehension_before")
+
+    # Speaking_after now routes conditionally to Comprehension_before
+    workflow.add_edge("Comprehension_before", "Comprehension")
     workflow.add_edge("Comprehension", "Comprehension_after")
-    workflow.add_edge("Comprehension_after", "MCQ")
+    workflow.add_edge("Comprehension_after", "Comprehension_feedback")
+    workflow.add_edge("Comprehension_feedback", "Comprehension_feedback_after")
+    workflow.add_edge("Comprehension_feedback_after", "MCQ")
+    # Comprehension_after now routes conditionally to MCQ (similar to Speaking_after pattern)
     workflow.add_edge("MCQ", "MCQ_after")
-    # workflow.add_edge("MCQ")
     workflow.add_edge("End", END)
     workflow.add_edge("Offensive", END)
 
@@ -523,17 +838,27 @@ def build_communication_graph(google_api_key: str, checkpointer: str):
 
     workflow.add_conditional_edges(
         "Rapport_after",
-        create_route_to_rapport_node(llm.with_structured_output(CommunicationRapportRouting)) 
+        create_route_to_rapport_node(llm.with_structured_output(CommunicationRapportRouting))
     )
+
+    workflow.add_conditional_edges(
+        "PersonalDetails_after",
+        create_route_to_personal_details_node(llm.with_structured_output(CommunicationPersonalDetailsRouting))
+    )
+
+    workflow.add_conditional_edges(
+        "Speaking_after",
+        create_route_to_speaking_node(llm.with_structured_output(CommunicationSpeakingRouting))
+    )
+
+    # workflow.add_conditional_edges(
+    #     "Comprehension_after",
+    #     create_route_to_comprehension_node(llm.with_structured_output(CommunicationComprehensionRouting))
+    # )
 
     workflow.add_conditional_edges(
         "MCQ_after",
         create_route_to_mcq_node(llm.with_structured_output(CommunicationMCQRouting))
     )
-
-
-
-    # workflow.add_edge("End", END)
-    workflow.add_edge("Offensive", END)
 
     return workflow.compile(checkpointer=checkpointer)

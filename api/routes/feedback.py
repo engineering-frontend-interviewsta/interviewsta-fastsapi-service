@@ -53,7 +53,7 @@ async def request_feedback_generation(
                 detail="Session not found"
             )
         
-        if session["user_id"] != user_info["uid"]:
+        if session["user_id"] != user_info["email"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to access this session"
@@ -73,17 +73,17 @@ async def request_feedback_generation(
         
         if request.interview_type == "Technical":
             task = generate_technical_feedback.apply_async(
-                args=[request.session_id, history, user_info["uid"]],
+                args=[request.session_id, history, user_info["email"]],
                 queue="feedback"
             )
         elif request.interview_type == "HR":
             task = generate_hr_feedback.apply_async(
-                args=[request.session_id, history, user_info["uid"]],
+                args=[request.session_id, history, user_info["email"]],
                 queue="feedback"
             )
         elif request.interview_type == "CaseStudy":
             task = generate_case_study_feedback.apply_async(
-                args=[request.session_id, history, user_info["uid"]],
+                args=[request.session_id, history, user_info["email"]],
                 queue="feedback"
             )
         else:
@@ -206,7 +206,7 @@ async def get_session_feedback(
                 detail="Session not found"
             )
         
-        if session["user_id"] != user_info["uid"]:
+        if session["user_id"] != user_info["email"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to access this session"

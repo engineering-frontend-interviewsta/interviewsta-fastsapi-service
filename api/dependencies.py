@@ -6,11 +6,13 @@ from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from redis import Redis
 from typing import Optional
-import firebase_admin
-from firebase_admin import auth, credentials
-import json
-import base64
-import os
+import jwt
+try:
+    from jwt.exceptions import ExpiredSignatureError, PyJWTError
+except ImportError:
+    # PyJWT not fully installed or wrong package; use Exception and message checks
+    ExpiredSignatureError = type("ExpiredSignatureError", (Exception,), {})
+    PyJWTError = Exception
 import logging
 
 from config import get_settings
@@ -18,36 +20,11 @@ from config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Initialize Firebase Admin SDK
-_firebase_initialized = False
-
-def initialize_firebase():
-    """Initialize Firebase Admin SDK"""
-    global _firebase_initialized
-    if not _firebase_initialized and not firebase_admin._apps:
-        try:
-            firebase_json_b64 = settings.FIREBASE_CREDENTIALS_JSON
-            if firebase_json_b64:
-                firebase_json = base64.b64decode(firebase_json_b64).decode("utf-8")
-                cred = credentials.Certificate(json.loads(firebase_json))
-                firebase_admin.initialize_app(cred)
-                _firebase_initialized = True
-                logger.info("Firebase Admin SDK initialized successfully")
-            else:
-                logger.warning("FIREBASE_CREDENTIALS_JSON not set, Firebase auth will not work")
-        except Exception as e:
-            logger.error(f"Failed to initialize Firebase: {e}")
-
-
-# Initialize Firebase on module import
-initialize_firebase()
-
 # Security scheme
 security = HTTPBearer()
 
 # Redis connection pool
 _redis_client: Optional[Redis] = None
-
 
 def get_redis() -> Redis:
     """Get Redis client instance"""
@@ -62,66 +39,91 @@ def get_redis() -> Redis:
         )
     return _redis_client
 
+def _verify_jwt_token(token: str) -> dict:
+    """
+    Verify JWT token from DRF backend.
+    
+    Args:
+        token: JWT access token
+        
+    Returns:
+        dict: Decoded token payload
+        
+    Raises:
+        ExpiredSignatureError / PyJWTError: If token is invalid or expired
+    """
+    # Use the same secret and algorithm as your DRF backend
+    # For djangorestframework-simplejwt defaults:
+    decoded = jwt.decode(
+        token,
+        'django-insecure-kkx4u+$)leey_1p9s8a$b7ayc*0an21$y9ho4#ntouyo7xns=b',  # Same as Django SECRET_KEY or SIGNING_KEY
+        algorithms=["HS256"],  # Usually "HS256" or "RS256"
+        # Add these if using djangorestframework-simplejwt defaults:
+        options={
+            "verify_signature": True,
+            "verify_exp": True,
+            "verify_aud": False,  # Set to True if you use audience claim
+        }
+    )
+    return decoded
 
-def _verify_id_token_sync(token: str):
-    """Blocking Firebase token verification. Run in thread to avoid starving the event loop."""
-    return auth.verify_id_token(token)
-
-
-async def verify_firebase_token(
+async def verify_jwt_token(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> dict:
     """
-    Verify Firebase ID token and return user info.
-    Verification runs in a thread pool so the event loop stays free under load.
+    Verify JWT token and return user info.
+    Verification runs in a thread pool to avoid blocking the event loop.
     """
     token = credentials.credentials
     try:
-        decoded_token = await asyncio.to_thread(_verify_id_token_sync, token)
-    except auth.InvalidIdTokenError:
-        logger.warning("Invalid Firebase token")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    except auth.ExpiredIdTokenError:
-        logger.warning("Expired Firebase token")
+        # Run JWT decode in thread pool (crypto operations can be CPU-bound)
+        decoded_token = await asyncio.to_thread(_verify_jwt_token, token)
+    except ExpiredSignatureError:
+        logger.warning("Expired JWT token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    except PyJWTError as e:
+        logger.warning(f"Invalid JWT token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     except Exception as e:
-        logger.error(f"Error verifying Firebase token: {e}")
+        logger.error(f"Error verifying JWT token: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Extract user info from JWT payload
+    # Support both Firebase-style (sub/uid) and DRF-style (user_id) tokens
+    uid = decoded_token.get("user_id") or decoded_token.get("uid") or decoded_token.get("sub")
+    print("This is the decoded token:", decoded_token)
+
     user_info = {
-        "uid": decoded_token["uid"],
+        "user_id": decoded_token.get("user_id"),
+        "uid": uid,
         "email": decoded_token.get("email"),
-        "email_verified": decoded_token.get("email_verified", False),
-        "name": decoded_token.get("name"),
-        "picture": decoded_token.get("picture"),
+        "username": decoded_token.get("username"),
     }
     return user_info
 
-
-async def get_current_user(user_info: dict = Depends(verify_firebase_token)) -> dict:
+async def get_current_user(user_info: dict = Depends(verify_jwt_token)) -> dict:
     """
     Get current authenticated user
     
     Args:
-        user_info: User info from Firebase token verification
+        user_info: User info from JWT token verification
         
     Returns:
         dict: Current user information
     """
     return user_info
-
 
 async def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[dict]:
     """
@@ -139,24 +141,27 @@ async def get_optional_user(authorization: Optional[str] = Header(None)) -> Opti
     
     try:
         token = authorization.replace("Bearer ", "")
-        decoded_token = auth.verify_id_token(token)
+        decoded_token = _verify_jwt_token(token)
+        uid = decoded_token.get("user_id") or decoded_token.get("uid") or decoded_token.get("sub")
+        print("This is the decoded token:", decoded_token)
         return {
-            "uid": decoded_token["uid"],
+            "user_id": decoded_token.get("user_id"),
+            "uid": uid,
             "email": decoded_token.get("email"),
+            "username": decoded_token.get("username"),
         }
     except Exception:
         return None
 
-
 async def verify_token_from_query(token: Optional[str] = None) -> dict:
     """
-    Verify Firebase token from query parameter (for SSE where headers aren't supported)
+    Verify JWT token from query parameter (for SSE where headers aren't supported)
     
     Args:
-        token: Firebase ID token from query parameter
+        token: JWT access token from query parameter
         
     Returns:
-        dict: User information from Firebase token
+        dict: User information from JWT token
         
     Raises:
         HTTPException: If token is invalid or expired
@@ -169,33 +174,30 @@ async def verify_token_from_query(token: Optional[str] = None) -> dict:
     
     try:
         # Verify the token
-        decoded_token = auth.verify_id_token(token)
-        
-        # Extract user info
+        decoded_token = _verify_jwt_token(token)
+        uid = decoded_token.get("user_id") or decoded_token.get("uid") or decoded_token.get("sub")
         user_info = {
-            "uid": decoded_token["uid"],
+            "user_id": decoded_token.get("user_id"),
+            "uid": uid,
             "email": decoded_token.get("email"),
-            "email_verified": decoded_token.get("email_verified", False),
-            "name": decoded_token.get("name"),
-            "picture": decoded_token.get("picture"),
+            "username": decoded_token.get("username"),
         }
-        
         return user_info
         
-    except auth.InvalidIdTokenError:
-        logger.warning("Invalid Firebase token from query parameter")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token",
-        )
-    except auth.ExpiredIdTokenError:
-        logger.warning("Expired Firebase token from query parameter")
+    except ExpiredSignatureError:
+        logger.warning("Expired JWT token from query parameter")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has expired",
         )
+    except PyJWTError as e:
+        logger.warning(f"Invalid JWT token from query parameter: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token",
+        )
     except Exception as e:
-        logger.error(f"Error verifying Firebase token from query: {e}")
+        logger.error(f"Error verifying JWT token from query: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
