@@ -11,24 +11,27 @@ from langgraph.checkpoint.redis import RedisSaver
 from workflows.technical import get_technical_graph
 from workflows.hr import get_hr_graph
 from workflows.coding import get_graph as get_coding_graph
+from workflows.companybuilder import build_company_graph
 from workflows.case_study import build_case_study_graph
 from workflows.communication import build_communication_graph
 from workflows.rolebased import get_role_based_graph
+from workflows.debate import build_debate_graph
 
 logger = logging.getLogger(__name__)
 
 # Interview types that use a checkpointer (session state)
-INTERVIEW_TYPES = ("Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview")
+INTERVIEW_TYPES = ("Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate")
 
-# Interrupt nodes per type (for human-in-the-loop). Role-Based: all *_after nodes.
+# Interrupt nodes per type (for human-in-the-loop). Must match *_after nodes in each workflow.
 INTERRUPT_NODES: Dict[str, List[str]] = {
     "Technical": ["Greeting_after", "Technical_after", "Coding_after", "Project_after"],
     "HR": ["Greeting_after", "HR_after"],
-    "Company": ["Greeting_after", "Coding_after"],
-    "Subject": ["Greeting_after", "Coding_after"],
+    "Company": ["Greeting_after", "Personalised_after", "Conceptual_after", "Project_after", "ProductScenario_after", "LogicalReasoning_after", "Coding_after"],
+    "Subject": ["Greeting_after", "Personalised_after", "Conceptual_after", "Coding_after"],
     "CaseStudy": ["Greeting_after", "CaseStudy_after"],
     "Communication": ["Greeting_after", "Rapport_after", "PersonalDetails_after", "Speaking_after", "Speaking_feedback_after", "Comprehension_after", "Comprehension_feedback_after", "MCQ_after"],
     "Role-Based Interview": ["Greeting_after", "Personalised_after", "Technical_after", "Coding_after", "Project_after"],
+    "Debate": ["Greeting_after", "Debate_after"],
 }
 
 
@@ -124,7 +127,9 @@ class InterviewAgentService:
             graph = get_technical_graph(google_key, tavily_key, checkpointer)
         elif interview_type == "HR":
             graph = get_hr_graph(google_key, tavily_key, checkpointer)
-        elif interview_type in ("Company", "Subject"):
+        elif interview_type == "Company":
+            graph = build_company_graph(google_key, tavily_key, checkpointer)
+        elif interview_type == "Subject":
             graph = get_coding_graph(interview_type, google_key, tavily_key, checkpointer)
         elif interview_type == "CaseStudy":
             graph = build_case_study_graph(google_key, checkpointer)
@@ -133,6 +138,8 @@ class InterviewAgentService:
         elif interview_type == "Role-Based Interview":
             role_val = role or "Frontend Development"
             graph = get_role_based_graph(google_key, role_val, checkpointer)
+        elif interview_type == "Debate":
+            graph = build_debate_graph(google_key, checkpointer)
         else:
             raise ValueError(f"Unknown interview type: {interview_type}")
 

@@ -14,10 +14,12 @@ from services.interview_session import InterviewSessionManager
 from services.interview_agent import get_interview_agent
 from workflows.technical import TechnicalInterviewState
 from workflows.hr import HRInterviewState
-from workflows.coding import CompanyInterviewState, SubjectInterviewState
+from workflows.coding import SubjectInterviewState
+from workflows.companybuilder import CompanyInterviewState as CompanyInterviewStateBuilder
 from workflows.case_study import CaseStudyInterviewState
 from workflows.communication import CommunicationInterviewState
 from workflows.rolebased import RoleBasedInterviewState
+from workflows.debate import DebateInterviewState
 from langchain_core.messages import HumanMessage
 from services.audio_processor import AudioProcessor
 
@@ -96,22 +98,29 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             history=""
         )
     elif interview_type == "Company":
-        return CompanyInterviewState(
+        tags = payload.get("Tags", [])
+        tags_str = ", ".join(str(t) for t in tags) if isinstance(tags, list) else (tags or " ")
+        return CompanyInterviewStateBuilder(
             LastNode="default",
             company=payload.get("company", ""),
             QuestionResearch=payload.get("QuestionResearch", ""),
             history="",
             Difficulty=payload.get("Difficulty", "Medium"),
-            Tags=payload.get("Tags", [])
+            Tags=tags_str,
+            resume=payload.get("resume", "No resume provided"),
         )
     elif interview_type == "Subject":
+        # Accept both "subject" and "Subject" (frontend sends SubjectWise.Subject)
+        subject = (payload.get("subject") or payload.get("Subject") or "").strip()
+        tags = payload.get("Tags", [])
+        tags_str = ", ".join(str(t) for t in tags) if isinstance(tags, list) else (tags or " ")
         return SubjectInterviewState(
             LastNode="default",
-            subject=payload.get("subject", ""),
+            subject=subject or "Arrays",
             QuestionResearch=payload.get("QuestionResearch", ""),
             history="",
             Difficulty=payload.get("Difficulty", "Medium"),
-            Tags=payload.get("Tags", [])
+            Tags=tags_str,
         )
     elif interview_type == "CaseStudy":
         return CaseStudyInterviewState(
@@ -140,6 +149,13 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             resume=payload.get("resume", "No resume provided"),
             role=payload.get("role", "Frontend Development"),
             messages=[],
+        )
+    elif interview_type == "Debate":
+        return DebateInterviewState(
+            LastNode="",
+            history="",
+            messages=[],
+            rounds_completed=0,
         )
     else:
         raise ValueError(f"Invalid interview type: {interview_type}")
@@ -180,12 +196,12 @@ def update_workflow_state(workflow, config, interview_type: str, current_state, 
                 "history": current_state.values.get("history", "") + "\nInterviewee-" + human_input
             })
     else:
-        # For other types
-        messages = current_state.values.get("messages", [])
-        messages.append(human_input)
-        
+        # For Technical, HR, Company, Subject, Role-Based: append HumanMessage so state matches graph expectations
+        human_message = HumanMessage(content=human_input)
+        current_messages = current_state.values.get("messages", [])
+        updated_messages = current_messages + [human_message]
         workflow.update_state(config, {
-            "messages": messages,
+            "messages": updated_messages,
             "history": current_state.values.get("history", "") + "\nInterviewee-" + human_input
         })
 
@@ -274,7 +290,7 @@ def process_interview_start(
         
         logger.info(f"Session {session_id} created and marked as processing")
         
-        # Subject interviews: fetch research questions from DRF by interview_test_id
+        # Subject interviews: fetch research questions and subject/topic name from DRF by interview_test_id
         if interview_type == "Subject":
             interview_test_id = payload.get("interview_test_id") or payload.get("interview_type_id")
             if interview_test_id is not None:
@@ -297,13 +313,23 @@ def process_interview_start(
                                 qr = str(raw) if raw is not None else None
                             if qr is None:
                                 qr = str(research)
+                            if qr:
+                                payload = {**payload, "QuestionResearch": qr}
+                            # DRF returns "topic" (e.g. "Arrays") - set subject so greeting says the actual topic
+                            topic = research.get("topic") or research.get("subject")
+                            if topic:
+                                payload = {**payload, "subject": str(topic).strip()}
+                                logger.info(f"Subject interview: set subject from DRF topic={topic}")
                         elif isinstance(research, list):
                             qr = "\n".join(str(x) for x in research)
+                            if qr:
+                                payload = {**payload, "QuestionResearch": qr}
                         else:
                             qr = str(research)
-                        if qr:
-                            payload = {**payload, "QuestionResearch": qr}
-                        logger.info(f"Subject interview: loaded research questions for interview_test_id={interview_test_id}")
+                            if qr:
+                                payload = {**payload, "QuestionResearch": qr}
+                        if payload.get("QuestionResearch"):
+                            logger.info(f"Subject interview: loaded research for interview_test_id={interview_test_id}")
                 except Exception as e:
                     logger.warning(f"Could not fetch research questions for Subject interview: {e}")
         

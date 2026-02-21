@@ -8,7 +8,7 @@ from datetime import datetime
 
 class InterviewStartRequest(BaseModel):
     """Request to start an interview session"""
-    interview_type: Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview"]
+    interview_type: Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate"]
     session_id: str
     user_id: str
     payload: Dict[str, Any] = Field(default_factory=dict)

@@ -60,14 +60,23 @@ class InterviewProgress(BaseModel):
                           "Exceptionally, if the interviewee is being offensive or constantly not taking the interview serious, return 'Offensive'")
 
 class PersonalisedProgress(BaseModel):
-    send_to_which_node: Literal['Personalised', 'Coding_before', 'Offensive'] = \
+    send_to_which_node: Literal['Personalised', 'Conceptual_before', 'Offensive'] = \
         Field(description="Supervise the personalized conversation phase. Route to 'Personalised' if the conversation "
                           "is still ongoing (less than 6-7 exchanges completed) and you're still getting to know the candidate. "
-                          "Route to 'Coding_before' ONLY when you've had approximately 6-7 good conversational exchanges "
+                          "Route to 'Conceptual_before' ONLY when you've had approximately 6-7 good conversational exchanges "
                           "about their name, background, education, interests, hobbies, and journey into tech, AND you've "
-                          "acknowledged what you've learned and asked if they're ready to begin the coding assessment, "
+                          "acknowledged what you've learned and asked if they're ready to begin the conceptual and coding part, "
                           "AND the candidate has confirmed they're ready (e.g., 'yes', 'ready', 'let's go', 'proceed', 'sure'). "
                           "Exceptionally, if the interviewee is being offensive or constantly not taking the interview serious, return 'Offensive'")
+
+
+class ConceptualProgress(BaseModel):
+    send_to_which_node: Literal['Conceptual', 'Coding_before', 'Offensive'] = \
+        Field(description="Supervise the conceptual/theory phase. Route to 'Conceptual' if you have asked fewer than 2-3 "
+                          "conceptual questions on the topic or the candidate's answers need follow-up. Route to 'Coding_before' "
+                          "ONLY when you have asked 2-3 conceptual questions on the subject and received reasonable answers, "
+                          "and you have explicitly transitioned (e.g., 'Now let\'s move on to the coding problems'). "
+                          "Exceptionally, if the interviewee is being offensive or not serious, return 'Offensive'")
 
 
 class CodingProgress(BaseModel):
@@ -129,6 +138,39 @@ coding_prompt_temp = PromptTemplate(
     template=coding_prompt
 )
 
+# Subject interview: conceptual phase only (2-3 theory questions on the chosen DSA topic)
+subject_conceptual_prompt = '''
+You are Glee, an SDE conducting a DSA interview on the topic of {subject}. This phase is ONLY for conceptual/theory questions.
+
+Your role: Ask 2-3 conceptual questions that are specifically about {subject} (e.g. time complexity of operations, when to use it, trade-offs vs alternatives, key properties). Do NOT ask about unrelated data structures (e.g. do not ask about stack vs queue in an Arrays interview).
+
+Use this research for ideas, but keep questions focused on {subject}:
+{questions}
+
+Rules:
+- In this turn, ask 1-2 conceptual questions clearly and conversationally. Ask the candidate to explain in their own words.
+- Speak in plain continuous text, no bullet points or formatting as if speaking aloud.
+- After 2-3 conceptual questions are done and the candidate has answered, you will transition to the coding phase in a later turn. Do not present coding problems in this phase.
+'''
+
+# Subject interview: coding phase only (no conceptual mix; conceptual was done in previous phase)
+subject_coding_prompt = '''
+You are Glee, an SDE conducting a DSA coding interview on the topic of {subject}. You have already completed the conceptual/theory phase. Now you are in the CODING phase only.
+
+Your role: Present coding problems that are specifically about {subject}. Do NOT ask conceptual or theory questions here; those were already covered.
+
+Use this research for coding problems:
+{questions}
+
+Interview flow:
+1. Present the first coding problem from the research (or a classic {subject} problem). Ask the candidate to explain the problem back to you.
+2. Ask them to write code in the Code Editor. Analyze their code; ask guiding questions if there are issues.
+3. Discuss approach, edge cases, and time complexity. Then move to a second coding problem and repeat.
+4. The interview ends only after two distinct coding problems are fully resolved and you have explicitly signed off.
+
+Speak in plain continuous text, as if speaking aloud. Be conversational and encouraging.
+'''
+
 company_greeting_prompt = '''
 Your name is Glee, SDE at {Company} and you have to act as an interviewer conducting a live interview session for a Software Engineer position at {Company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
 
@@ -148,19 +190,19 @@ Your instructions are:
 '''
 
 subject_greeting_prompt = '''
-Your name is Glee, SDE and you have to act as an interviewer conducting a live interview session focusing on {topic}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
+Your name is Glee, SDE and you have to act as an interviewer conducting a live DSA interview session on the topic of {topic}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
 
 Your instructions are:
 
 1. Start with a Warm Greeting: Begin with a friendly and personal greeting. Do not include any parenthetical actions, stage directions, or cues (e.g., laughing gently, sighs, smiles).
 
-2. Introduce Yourself: State your name and your role for the session (e.g., "I'll be your interviewer today").
+2. Introduce Yourself and the Topic: State your name and clearly mention that you will be their interviewer for this {topic} interview (e.g., "I'm Glee, and I'll be your interviewer for this {topic} interview today" or "I'll be your interviewer for this DSA interview focusing on {topic}").
 
-3. Explain the Format: Briefly outline what the candidate can expect. Mention that we'll start with a brief conversation to get to know them better, then you'll be going through a couple of coding problems and that the focus is on their thought process and problem-solving approach, not just the final answer. Encourage them to think out loud.
+3. Explain the Format: Briefly outline what the candidate can expect. Mention that we'll start with a brief conversation to get to know them better, then you'll be going through a couple of coding problems on {topic} and that the focus is on their thought process and problem-solving approach, not just the final answer. Encourage them to think out loud.
 
 4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
 
-5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of interview. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better before beginning the coding assessment.
+5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of interview. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better before beginning the {topic} coding assessment.
 
 
 '''
@@ -366,9 +408,37 @@ def create_personalised_node(llm) -> Callable:
     return _Node
 
 def create_route_to_personalised(PersonalisedProgress_llm) -> Callable:
-    def _Node(state: S) -> Literal['Personalised', 'Coding_before', 'Offensive']:
+    def _Node(state: S) -> Literal['Personalised', 'Conceptual_before', 'Offensive']:
         response = PersonalisedProgress_llm.invoke(state["history"])
         print("This is the personalised routing node", response.send_to_which_node)
+        return response.send_to_which_node
+    return _Node
+
+
+def create_conceptual_node(llm) -> Callable:
+    """Ask 2-3 conceptual/theory questions only on the chosen subject (e.g. Arrays)."""
+    def _Node(state: S) -> S:
+        if state["LastNode"] != "Conceptual":
+            subject = state.get("subject", "Arrays")
+            research = state.get("QuestionResearch", "")
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", subject_conceptual_prompt.format(subject=subject, questions=research))
+            ])
+            input_messages = prompt.format_messages()
+            state["messages"] = input_messages + state["messages"]
+            state["LastNode"] = "Conceptual"
+        response = llm.invoke(state["messages"])
+        state["messages"] = state["messages"] + [response]
+        state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
+        state["LastNode"] = "Conceptual"
+        return state
+    return _Node
+
+
+def create_route_to_conceptual(ConceptualProgress_llm) -> Callable:
+    def _Node(state: S) -> Literal['Conceptual', 'Coding_before', 'Offensive']:
+        response = ConceptualProgress_llm.invoke(state["history"])
+        print("This is the conceptual routing node", response.send_to_which_node)
         return response.send_to_which_node
     return _Node
 
@@ -390,13 +460,13 @@ def create_greeting_node(interview_type, Greeting_llm) -> Callable:
         greeting_prompt = get_greeting_prompt_template(interview_type, inp_company)
       else:
         try:
-          inp_state = state["subject"]
+          inp_state = (state.get("subject") or "").strip()
           if not inp_state or inp_state == "None":
-            print(f"[WARNING] Subject is None or empty in state. Using fallback.")
-            inp_state = "the topic"
-        except KeyError:
+            print(f"[WARNING] Subject is None or empty in state. Using fallback 'Arrays'.")
+            inp_state = "Arrays"
+        except (KeyError, TypeError):
           print(f"[WARNING] 'subject' key not found in state. Available keys: {list(state.keys())}")
-          inp_state = "the topic"
+          inp_state = "Arrays"
         print(f"[DEBUG] Subject for greeting: {inp_state}")
         greeting_prompt = get_greeting_prompt_template(interview_type, inp_state)
       print(greeting_prompt.format_messages())
@@ -415,22 +485,25 @@ def create_greeting_node(interview_type, Greeting_llm) -> Callable:
   return _Node
 
 
-def create_coding_node(Coding_llm) -> Callable:
+def create_coding_node(input_type: str, Coding_llm) -> Callable:
     def _Node(state: S) -> S:
-        # print("Coding chh aa gye assi")
-
         if state["LastNode"] != "Coding":
-            # Get company name if it's a company interview, otherwise use "the company"
-            company_name = state.get("company", "the company") if isinstance(state, dict) else (getattr(state, "company", "the company") if hasattr(state, "company") else "the company")
-            if not company_name or company_name == "None" or company_name == "":
-                company_name = "the company"
-            
-            input_ = coding_prompt_template.format_messages(questions = state["QuestionResearch"], company = company_name)
-            state["messages"][0].content = coding_prompt_temp.format(questions = state["QuestionResearch"], company = company_name)
-        # print(state["messages"]
-        # state["messages"] = state["messages"] + input_
-
-
+            # Subject: use subject-only coding prompt (conceptual phase is separate)
+            if input_type == "Subject" or state.get("subject"):
+                subject = state.get("subject", "Arrays")
+                research = state.get("QuestionResearch", "")
+                prompt = ChatPromptTemplate.from_messages([
+                    ("system", subject_coding_prompt.format(subject=subject, questions=research))
+                ])
+                input_messages = prompt.format_messages()
+                state["messages"] = input_messages + state["messages"]
+            else:
+                company_name = state.get("company", "the company") or "the company"
+                if company_name == "None" or company_name == "":
+                    company_name = "the company"
+                state["messages"][0].content = coding_prompt_temp.format(
+                    questions=state["QuestionResearch"], company=company_name
+                )
         response = Coding_llm.invoke(state["messages"])
         print(response)
 
@@ -536,9 +609,11 @@ def get_graph(input_type: str, google_api_key: str, tavily_api_key: str, checkpo
     workflow.add_node("Personalised_before", create_dummy_node())
     workflow.add_node("Personalised", create_personalised_node(llm))
     workflow.add_node("Personalised_after", create_dummy_node())
+    workflow.add_node("Conceptual_before", create_dummy_node())
+    workflow.add_node("Conceptual", create_conceptual_node(llm))
+    workflow.add_node("Conceptual_after", create_dummy_node())
     workflow.add_node("Coding_before", create_before_coding_node(llm))
-    # workflow.add_node("Coding_before", create_questions_search_node(llm))
-    workflow.add_node("Coding", create_coding_node(llm))
+    workflow.add_node("Coding", create_coding_node(input_type, llm))
     workflow.add_node("Coding_after", create_dummy_node())
     workflow.add_node("End", create_end_Node())
     workflow.add_node("Offensive", create_offend_end_node(llm))
@@ -549,8 +624,8 @@ def get_graph(input_type: str, google_api_key: str, tavily_api_key: str, checkpo
     workflow.add_edge("Greeting", "Greeting_after")
     workflow.add_edge("Personalised_before", "Personalised")
     workflow.add_edge("Personalised", "Personalised_after")
-    # workflow.add_edge("Greeting_after","Coding")
-    # workflow.add_edge("Coding_before","Coding")
+    workflow.add_edge("Conceptual_before", "Conceptual")
+    workflow.add_edge("Conceptual", "Conceptual_after")
     workflow.add_edge("Initial_Research", "Greeting")
     workflow.add_edge("Coding", "Coding_after")
     workflow.add_edge("Coding_before", "Coding")
@@ -563,6 +638,8 @@ def get_graph(input_type: str, google_api_key: str, tavily_api_key: str, checkpo
                                    create_route_to_greeting(llm.with_structured_output(InterviewProgress)))
     workflow.add_conditional_edges("Personalised_after",
                                    create_route_to_personalised(llm.with_structured_output(PersonalisedProgress)))
+    workflow.add_conditional_edges("Conceptual_after",
+                                   create_route_to_conceptual(llm.with_structured_output(ConceptualProgress)))
     workflow.add_conditional_edges("Coding_after", create_route_to_coding(llm.with_structured_output(CodingProgress)))
     agent = workflow.compile(checkpointer=checkpointer)
     print("In here")
