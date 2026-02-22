@@ -468,7 +468,8 @@ async def submit_response(
                 session_id,
                 request.audio_data,
                 request.text_response,
-                request.code_input
+                request.code_input,
+                request.skip_audio
             ],
             queue="interview"
         )

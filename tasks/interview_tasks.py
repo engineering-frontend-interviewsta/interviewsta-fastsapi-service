@@ -488,7 +488,8 @@ def process_user_response_with_transcription(
     session_id: str,
     audio_data: Optional[str],
     text_response: Optional[str],
-    code_input: Optional[str]
+    code_input: Optional[str],
+    skip_audio: bool = False
 ) -> Dict[str, Any]:
     """
     Complete response pipeline: transcribe → process → generate audio.
@@ -496,16 +497,17 @@ def process_user_response_with_transcription(
     This is the NEW OPTIMIZED task that combines everything:
     - Transcription (if audio provided)
     - Workflow processing
-    - TTS audio generation
+    - TTS audio generation (skipped if skip_audio=True for dev mode)
     
     Args:
         session_id: Session identifier
         audio_data: Base64 encoded audio (optional)
         text_response: Text response (optional)
         code_input: Code submission (optional)
+        skip_audio: Skip TTS generation for dev mode (default: False)
         
     Returns:
-        dict: AI response with audio
+        dict: AI response with audio (audio_base64 is None if skip_audio=True)
     """
     try:
         logger.info(f"Processing complete response pipeline for session {session_id}")
@@ -657,20 +659,23 @@ def process_user_response_with_transcription(
         
         logger.info(f"AI response generated for {session_id}: '{message[:100]}...'")
         
-        # Step 3: Generate TTS audio (80% progress)
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 80, "message": "Generating audio..."}
-        )
-        
+        # Step 3: Generate TTS audio (80% progress) - Skip if dev mode
         audio_base64 = None
-        try:
-            logger.info(f"Synthesizing audio for session {session_id}")
-            audio_base64 = self.audio_processor.synthesize_speech_base64(message)
-            logger.info(f"Audio synthesis successful")
-        except Exception as e:
-            logger.error(f"Audio synthesis failed: {e}")
-            # Continue without audio
+        if not skip_audio:
+            self.update_state(
+                state="PROGRESS",
+                meta={"progress": 80, "message": "Generating audio..."}
+            )
+            
+            try:
+                logger.info(f"Synthesizing audio for session {session_id}")
+                audio_base64 = self.audio_processor.synthesize_speech_base64(message)
+                logger.info(f"Audio synthesis successful")
+            except Exception as e:
+                logger.error(f"Audio synthesis failed: {e}")
+                # Continue without audio
+        else:
+            logger.info(f"[DEV MODE] Skipping audio generation for session {session_id}")
         
         # Step 4: Store response in Redis (95% progress)
         self.update_state(

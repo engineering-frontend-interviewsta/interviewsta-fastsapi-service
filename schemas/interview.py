@@ -46,6 +46,7 @@ class UserResponseRequest(BaseModel):
     text_response: Optional[str] = None  # plain text; can be the only field for writing phases
     code_input: Optional[str] = None
     video_quality_data: Optional[Dict[str, Any]] = None
+    skip_audio: Optional[bool] = False  # DEV MODE: Skip TTS generation for faster testing
     
     class Config:
         json_schema_extra = {
