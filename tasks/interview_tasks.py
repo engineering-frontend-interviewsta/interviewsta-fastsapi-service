@@ -100,9 +100,10 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
     elif interview_type == "Company":
         tags = payload.get("Tags", [])
         tags_str = ", ".join(str(t) for t in tags) if isinstance(tags, list) else (tags or " ")
+        company = (payload.get("company") or payload.get("Company") or "").strip()
         return CompanyInterviewStateBuilder(
             LastNode="default",
-            company=payload.get("company", ""),
+            company=company or "the company",
             QuestionResearch=payload.get("QuestionResearch", ""),
             history="",
             Difficulty=payload.get("Difficulty", "Medium"),
@@ -284,6 +285,16 @@ def process_interview_start(
         logger.info(f"Creating session {session_id} in Redis for user {user_id}")
         self.session_manager.create_session(session_id, interview_type, user_id, payload)
         
+        # Store interview_test_id at top level so feedback task always has it (Company/Subject/Technical/etc.)
+        interview_test_id_from_payload = payload.get("interview_test_id") or payload.get("interview_type_id")
+        if interview_test_id_from_payload is not None:
+            try:
+                tid = int(interview_test_id_from_payload)
+                self.session_manager.update_session(session_id, {"interview_test_id": tid})
+                logger.info(f"Session {session_id}: stored interview_test_id={tid} from payload")
+            except (TypeError, ValueError):
+                pass
+        
         # Set processing flag (expires in 60s as safety)
         self.redis_client.setex(processing_key, 60, "true")
         self.session_manager.set_status(session_id, "processing")
@@ -332,20 +343,29 @@ def process_interview_start(
                             logger.info(f"Subject interview: loaded research for interview_test_id={interview_test_id}")
                 except Exception as e:
                     logger.warning(f"Could not fetch research questions for Subject interview: {e}")
+            if not (payload.get("subject") or "").strip():
+                payload = {**payload, "subject": (payload.get("Subject") or "").strip() or "Arrays"}
+                logger.info(f"Subject interview: using payload.Subject fallback={payload.get('subject')}")
         
-        # Company interviews: fetch company name from DRF by interview_test_id / interview_type_id
+        # Company interviews: prefer frontend-sent Company (e.g. Flipkart) so greeting always says the selected name
         if interview_type == "Company":
+            frontend_company = (payload.get("Company") or payload.get("company") or "").strip()
             interview_test_id = payload.get("interview_test_id") or payload.get("interview_type_id")
+            drf_company = None
             if interview_test_id is not None:
                 try:
                     from services.drf_client import get_company_for_interview
                     result = get_company_for_interview(interview_type_id=int(interview_test_id))
                     logger.info(f"Company interview: result={result} type={type(result)}")
                     if result is not None and isinstance(result, dict) and result.get("company"):
-                        payload = {**payload, "company": result["company"]}
-                        logger.info(f"Company interview: loaded company for interview_type_id={interview_test_id}")
+                        drf_company = (result["company"] or "").strip()
+                        logger.info(f"Company interview: DRF company for id={interview_test_id}: {drf_company}")
                 except Exception as e:
                     logger.warning(f"Could not fetch company for Company interview: {e}")
+            # Use frontend name first (user selected e.g. Flipkart), then DRF, then fallback
+            company = frontend_company or drf_company or "the company"
+            payload = {**payload, "company": company}
+            logger.info(f"Company interview: using company={company} (frontend={frontend_company!r}, drf={drf_company!r})")
         
         # Step 2: Initialize workflow (40% progress)
         self.update_state(

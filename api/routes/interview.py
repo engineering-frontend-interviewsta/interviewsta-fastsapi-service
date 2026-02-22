@@ -953,14 +953,21 @@ async def end_interview(
         # Mark session as ended
         session_manager.set_status(session_id, "completed")
         
-        # Store session metadata
-        session_manager.update_session(session_id, {
+        # Build session metadata: only set interview_test_id if request sent a valid value,
+        # otherwise keep the value stored at start (so Company/Subject don't get overwritten with null)
+        updates = {
             "duration": int(duration) if isinstance(duration, (int, str)) else 0,
             "interview_type": interview_type,
-            "interview_test_id": interview_test_id,
             "session_finished": session_finished,
             "ended_at": datetime.utcnow().isoformat()
-        })
+        }
+        try:
+            tid = int(interview_test_id) if interview_test_id is not None else None
+            if tid is not None:
+                updates["interview_test_id"] = tid
+        except (TypeError, ValueError):
+            pass
+        session_manager.update_session(session_id, updates)
         
         # If session is finished and has conversation history, trigger feedback generation
         # #region agent log

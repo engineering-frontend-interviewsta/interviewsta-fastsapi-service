@@ -209,7 +209,15 @@ def generate_technical_feedback(self, session_id: str, history: str, user_email:
             from services.drf_client import save_feedback_to_db
             
             interview_type = session.get("interview_type", "Technical") if session else "Technical"
-            interview_test_id = session.get("interview_test_id") if session else None
+            interview_test_id = (session or {}).get("interview_test_id")
+            if interview_test_id is None and session:
+                payload = session.get("payload") or {}
+                interview_test_id = payload.get("interview_type_id") or payload.get("interview_test_id")
+            if interview_test_id is not None:
+                try:
+                    interview_test_id = int(interview_test_id)
+                except (TypeError, ValueError):
+                    interview_test_id = None
             duration_seconds = session.get("duration", 0) if session else 0
             
             # Parse history to extract Q&A pairs (simple parsing for now)
@@ -339,7 +347,15 @@ def generate_hr_feedback(self, session_id: str, history: str, user_email: str) -
             from services.drf_client import save_feedback_to_db
             
             interview_type = session.get("interview_type", "HR") if session else "HR"
-            interview_test_id = session.get("interview_test_id") if session else None
+            interview_test_id = (session or {}).get("interview_test_id")
+            if interview_test_id is None and session:
+                payload = session.get("payload") or {}
+                interview_test_id = payload.get("interview_type_id") or payload.get("interview_test_id")
+            if interview_test_id is not None:
+                try:
+                    interview_test_id = int(interview_test_id)
+                except (TypeError, ValueError):
+                    interview_test_id = None
             
             duration_seconds = session.get("duration", 0) if session else 0
             
@@ -465,7 +481,15 @@ def generate_case_study_feedback(self, session_id: str, history: str, user_email
             from services.drf_client import save_feedback_to_db
             
             interview_type = session.get("interview_type", "CaseStudy") if session else "CaseStudy"
-            interview_test_id = session.get("interview_test_id") if session else None
+            interview_test_id = (session or {}).get("interview_test_id")
+            if interview_test_id is None and session:
+                payload = session.get("payload") or {}
+                interview_test_id = payload.get("interview_type_id") or payload.get("interview_test_id")
+            if interview_test_id is not None:
+                try:
+                    interview_test_id = int(interview_test_id)
+                except (TypeError, ValueError):
+                    interview_test_id = None
             duration = session.get("duration", 0) if session else 0
             
             # Parse history to extract Q&A pairs (simple parsing for now)
@@ -564,7 +588,15 @@ def generate_communication_feedback(self, session_id: str, history: str, user_em
         try:
             from services.drf_client import save_feedback_to_db
             interview_type = session.get("interview_type", "Communication Interview") if session else "Communication Interview"
-            interview_test_id = session.get("interview_test_id") if session else None
+            interview_test_id = (session or {}).get("interview_test_id")
+            if interview_test_id is None and session:
+                payload = session.get("payload") or {}
+                interview_test_id = payload.get("interview_type_id") or payload.get("interview_test_id")
+            if interview_test_id is not None:
+                try:
+                    interview_test_id = int(interview_test_id)
+                except (TypeError, ValueError):
+                    interview_test_id = None
             duration = session.get("duration", 0) if session else 0
             # Backend expects interaction_status_log in feedback_data (list of answer_status)
             feedback_data = {**feedback, "interaction_status_log": il.answer_status}
@@ -648,7 +680,15 @@ def generate_debate_feedback(self, session_id: str, history: str, user_email: st
         try:
             from services.drf_client import save_feedback_to_db
             interview_type = session.get("interview_type", "Debate Interview") if session else "Debate Interview"
-            interview_test_id = session.get("interview_test_id") if session else None
+            interview_test_id = (session or {}).get("interview_test_id")
+            if interview_test_id is None and session:
+                payload = session.get("payload") or {}
+                interview_test_id = payload.get("interview_type_id") or payload.get("interview_test_id")
+            if interview_test_id is not None:
+                try:
+                    interview_test_id = int(interview_test_id)
+                except (TypeError, ValueError):
+                    interview_test_id = None
             duration = session.get("duration", 0) if session else 0
             feedback_data = {**feedback, "interaction_status_log": il.answer_status}
             db_saved = save_feedback_to_db(
