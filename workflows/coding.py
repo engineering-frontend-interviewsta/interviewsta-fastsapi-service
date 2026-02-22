@@ -421,11 +421,10 @@ def create_conceptual_node(llm) -> Callable:
         if state["LastNode"] != "Conceptual":
             subject = state.get("subject", "Arrays")
             research = state.get("QuestionResearch", "")
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", subject_conceptual_prompt.format(subject=subject, questions=research))
-            ])
-            input_messages = prompt.format_messages()
-            state["messages"] = input_messages + state["messages"]
+            # Format the prompt and create SystemMessage directly
+            formatted_prompt = subject_conceptual_prompt.format(subject=subject, questions=research)
+            system_message = SystemMessage(content=formatted_prompt)
+            state["messages"] = [system_message] + state["messages"]
             state["LastNode"] = "Conceptual"
         response = llm.invoke(state["messages"])
         state["messages"] = state["messages"] + [response]
@@ -492,11 +491,10 @@ def create_coding_node(input_type: str, Coding_llm) -> Callable:
             if input_type == "Subject" or state.get("subject"):
                 subject = state.get("subject", "Arrays")
                 research = state.get("QuestionResearch", "")
-                prompt = ChatPromptTemplate.from_messages([
-                    ("system", subject_coding_prompt.format(subject=subject, questions=research))
-                ])
-                input_messages = prompt.format_messages()
-                state["messages"] = input_messages + state["messages"]
+                # Format the prompt and create SystemMessage directly
+                formatted_prompt = subject_coding_prompt.format(subject=subject, questions=research)
+                system_message = SystemMessage(content=formatted_prompt)
+                state["messages"] = [system_message] + state["messages"]
             else:
                 company_name = state.get("company", "the company") or "the company"
                 if company_name == "None" or company_name == "":
