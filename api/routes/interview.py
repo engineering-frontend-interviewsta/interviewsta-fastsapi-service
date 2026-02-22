@@ -976,12 +976,16 @@ async def end_interview(
                 from tasks.feedback_tasks import (
                     generate_technical_feedback,
                     generate_hr_feedback,
-                    generate_case_study_feedback
+                    generate_case_study_feedback,
+                    generate_communication_feedback,
+                    generate_debate_feedback,
                 )
                 
-                # Queue appropriate feedback task
-                # Map "Coding" to "Technical" for feedback generation
-                feedback_type = "Technical" if interview_type in ["Technical Interview", "Coding Interview"] else interview_type
+                # Queue appropriate feedback task (Company/Subject/Role-Based use technical feedback)
+                if interview_type in ("Technical Interview", "Coding Interview", "Company", "Subject", "Role-Based Interview"):
+                    feedback_type = "Technical"
+                else:
+                    feedback_type = interview_type
                 
                 logger.info(f"interview.py:end_interview:feedback_type. \n Feedback type: {feedback_type} \n interview_type: {interview_type}")
 
@@ -997,6 +1001,16 @@ async def end_interview(
                     )
                 elif feedback_type == "Case Study Interview":
                     task = generate_case_study_feedback.apply_async(
+                        args=[session_id, history, user_info["email"]],
+                        queue="feedback"
+                    )
+                elif feedback_type in ("Communication Interview", "Communication"):
+                    task = generate_communication_feedback.apply_async(
+                        args=[session_id, history, user_info["email"]],
+                        queue="feedback"
+                    )
+                elif feedback_type in ("Debate Interview", "Debate"):
+                    task = generate_debate_feedback.apply_async(
                         args=[session_id, history, user_info["email"]],
                         queue="feedback"
                     )

@@ -15,7 +15,9 @@ from services.interview_session import InterviewSessionManager
 from tasks.feedback_tasks import (
     generate_technical_feedback,
     generate_hr_feedback,
-    generate_case_study_feedback
+    generate_case_study_feedback,
+    generate_communication_feedback,
+    generate_debate_feedback,
 )
 from redis import Redis
 from celery.result import AsyncResult
@@ -68,21 +70,32 @@ async def request_feedback_generation(
                 detail="No conversation history found for this session"
             )
         
-        # Queue appropriate feedback task
+        # Queue appropriate feedback task (Company/Subject use technical pipeline)
         task = None
-        
-        if request.interview_type == "Technical":
+        it = request.interview_type
+
+        if it == "Technical" or it in ("Company", "Subject", "Role-Based"):
             task = generate_technical_feedback.apply_async(
                 args=[request.session_id, history, user_info["email"]],
                 queue="feedback"
             )
-        elif request.interview_type == "HR":
+        elif it == "HR":
             task = generate_hr_feedback.apply_async(
                 args=[request.session_id, history, user_info["email"]],
                 queue="feedback"
             )
-        elif request.interview_type == "CaseStudy":
+        elif it == "CaseStudy":
             task = generate_case_study_feedback.apply_async(
+                args=[request.session_id, history, user_info["email"]],
+                queue="feedback"
+            )
+        elif it in ("Communication", "Communication Interview"):
+            task = generate_communication_feedback.apply_async(
+                args=[request.session_id, history, user_info["email"]],
+                queue="feedback"
+            )
+        elif it in ("Debate", "Debate Interview"):
+            task = generate_debate_feedback.apply_async(
                 args=[request.session_id, history, user_info["email"]],
                 queue="feedback"
             )

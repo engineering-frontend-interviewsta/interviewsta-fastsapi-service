@@ -8,7 +8,12 @@ from typing import Optional, List, Dict, Any, Literal
 class FeedbackGenerationRequest(BaseModel):
     """Request to generate feedback for an interview"""
     session_id: str
-    interview_type: Literal["Technical", "HR", "CaseStudy"]
+    interview_type: Literal[
+        "Technical", "HR", "CaseStudy",
+        "Company", "Subject", "Role-Based",
+        "Communication", "Communication Interview",
+        "Debate", "Debate Interview",
+    ]
     user_id: str
 
 

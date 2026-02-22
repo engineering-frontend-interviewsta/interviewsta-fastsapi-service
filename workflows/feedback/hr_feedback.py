@@ -20,38 +20,52 @@ from langchain_core.runnables.graph import CurveStyle, MermaidDrawMethod
 
 
 class CommunicationSkills(BaseModel):
-    '''
-    You need to assign the following range of numbers for the following communication skills categories based on interaction history between intrviewer and interviewee- \n\n
-    0 - If some major offense have occured or not applicable
-    10,20,30,40 - If it was varying degrees of unseriousness, plainly wrong or barely comprehensive
-    50 - If they were average
-    60 - If they did decent
-    70 - If they did good
-    80 - If they did great
-    90 - If they did amazing
-    100 - If they did flawlessly
-    '''
-    clarity: int = Field(...,description="The clarity in human communication")
-    confidence: int = Field(...,description="The confidence in human communication")
-    structure: int = Field(...,description="The structure in human communication")
-    engagement: int = Field(...,description="The engagement in human communication")
+    """
+    Evaluate communication skills in an HR Interview based on the interaction history.
+    
+    Score each skill on a precise 0-100 scale. Use granular values (e.g., 67, 73, 82) NOT rounded multiples of 10.
+    
+    Performance Bands:
+    - 0: Insufficient data (fewer than 3 substantive responses) or major offense/misconduct
+    - 1-35: Poor - Significant gaps, unclear communication, or lack of basic skills
+    - 36-50: Below Average - Some communication ability but major weaknesses
+    - 51-60: Average - Adequate communication, meets basic expectations
+    - 61-70: Good - Solid communication with consistent clarity
+    - 71-80: Very Good - Strong communication skills with minor areas for improvement
+    - 81-90: Excellent - Expert-level communication and engagement
+    - 91-100: Outstanding - Exceptional mastery, highly effective communication
+    
+    CRITICAL: Assign specific scores within ranges (e.g., 67, 73, 82) based on nuanced performance.
+    Do NOT use only multiples of 10 (10, 20, 30, etc.). Be precise and granular.
+    """
+    clarity: int = Field(..., description="Clarity and articulation in communication - how well ideas are expressed. Score 0-100 with granular precision (e.g., 68, 76, 84).")
+    confidence: int = Field(..., description="Confidence and assertiveness in responses and self-presentation. Score 0-100 with granular precision (e.g., 72, 79, 87).")
+    structure: int = Field(..., description="Organization and logical structure of responses. Score 0-100 with granular precision (e.g., 65, 77, 88).")
+    engagement: int = Field(..., description="Level of engagement, enthusiasm, and active participation. Score 0-100 with granular precision (e.g., 71, 81, 92).")
 
 class CulturalFitSkills(BaseModel):
-    '''
-    You need to assign the following range of numbers for the following cultural fit skills categories based on interaction history between intrviewer and interviewee- \n\n
-    0 - If some major offense have occured or not applicable
-    10,20,30,40 - If it was varying degrees of unseriousness, plainly wrong or barely comprehensive
-    50 - If they were average
-    60 - If they did decent
-    70 - If they did good
-    80 - If they did great
-    90 - If they did amazing
-    100 - If they did flawlessly
-    '''
-    values: int = Field(...,description="The company values in human interaction")
-    teamwork: int = Field(...,description="The teamwork in human interaction")
-    growth: int = Field(...,description="Growth sentiments in human interaction")
-    initiative: int = Field(...,description="The initiative in human interaction")
+    """
+    Evaluate cultural fit skills in an HR Interview based on the interaction history.
+    
+    Score each skill on a precise 0-100 scale. Use granular values (e.g., 67, 73, 82) NOT rounded multiples of 10.
+    
+    Performance Bands:
+    - 0: Insufficient data (fewer than 3 substantive responses) or major offense/misconduct
+    - 1-35: Poor - Significant misalignment with values or lack of cultural awareness
+    - 36-50: Below Average - Some alignment but major concerns
+    - 51-60: Average - Adequate cultural fit, meets basic expectations
+    - 61-70: Good - Solid alignment with company values and culture
+    - 71-80: Very Good - Strong cultural fit with minor areas for development
+    - 81-90: Excellent - Exceptional alignment and cultural awareness
+    - 91-100: Outstanding - Perfect cultural fit, exemplary values demonstration
+    
+    CRITICAL: Assign specific scores within ranges (e.g., 67, 73, 82) based on nuanced performance.
+    Do NOT use only multiples of 10 (10, 20, 30, etc.). Be precise and granular.
+    """
+    values: int = Field(..., description="Alignment with company values and ethical standards demonstrated in responses. Score 0-100 with granular precision (e.g., 69, 77, 85).")
+    teamwork: int = Field(..., description="Teamwork orientation, collaboration skills, and ability to work with others. Score 0-100 with granular precision (e.g., 64, 73, 86).")
+    growth: int = Field(..., description="Growth mindset, learning orientation, and adaptability. Score 0-100 with granular precision (e.g., 71, 78, 88).")
+    initiative: int = Field(..., description="Proactiveness, self-motivation, and taking ownership. Score 0-100 with granular precision (e.g., 74, 82, 91).")
 
 Label = Literal["correct", "incorrect", "partially-correct", "cross-question"]
 
@@ -87,16 +101,20 @@ class ChatLogsFeedback(BaseModel):
     comment: str = Field()
 
 class HR_Strengths_and_areas_of_improvements(BaseModel):
-    '''
-    You are given interaction log between interviewer(ai) and interviewee(human).
-    You need to first ensure that you have enough of a history to comment.
-    '''
-    strength1: str = Field(...,description="1 crisp points of strengths which you think interviewee(human) has in Cultural(clarity,confidence,structure,engagement) and problem solving skills(values,teamwork,growth,initiative) strictly based on the question asked and answer provided and address them in second person.")
-    strength2: str = Field(...,description="1 crisp points of strengths which you think interviewee(human) has in Cultural(clarity,confidence,structure,engagement) and problem solving skills(values,teamwork,growth,initiative) strictly based on the question asked and answer provided and address them in second person.")
-    strength3: str = Field(...,description="1 crisp points of strengths which you think interviewee(human) has in Cultural(clarity,confidence,structure,engagement) and problem solving skills(values,teamwork,growth,initiative) strictly based on the question asked and answer provided and address them in second person.")
-    areas_of_improvements1: str = Field(...,description="1 crisp points of areas of improvements which you think interviewee(human) has in Cultural(clarity,confidence,structure,engagement) and problem solving skills(values,teamwork,growth,initiative) strictly based on the question asked and answer provided and address them in second person.")
-    areas_of_improvements2: str = Field(...,description="1 crisp points of areas of improvements which you think interviewee(human) has in Cultural(clarity,confidence,structure,engagement) and problem solving skills(values,teamwork,growth,initiative) strictly based on the question asked and answer provided and address them in second person.")
-    areas_of_improvements3: str = Field(...,description="1 crisp points of areas of improvements which you think interviewee(human) has in Cultural(clarity,confidence,structure,engagement) and problem solving skills(values,teamwork,growth,initiative) strictly based on the question asked and answer provided and address them in second person.")
+    """
+    Based on the interaction history between interviewer (AI) and interviewee (human) in an HR Interview,
+    provide 3 specific strengths and 3 specific areas for improvement in their communication and cultural fit skills.
+    
+    Focus on: clarity, confidence, structure, engagement, company values alignment, teamwork, growth mindset, and initiative.
+    Address the interviewee in second person (e.g., "You demonstrated excellent...", "Your teamwork orientation...").
+    Be specific and actionable, strictly based on the questions asked and answers provided.
+    """
+    strength1: str = Field(..., description="1 crisp, specific strength in communication or cultural fit skills, addressed in second person.")
+    strength2: str = Field(..., description="1 crisp, specific strength in communication or cultural fit skills, addressed in second person.")
+    strength3: str = Field(..., description="1 crisp, specific strength in communication or cultural fit skills, addressed in second person.")
+    areas_of_improvements1: str = Field(..., description="1 crisp, actionable area for improvement in communication or cultural fit skills, addressed in second person.")
+    areas_of_improvements2: str = Field(..., description="1 crisp, actionable area for improvement in communication or cultural fit skills, addressed in second person.")
+    areas_of_improvements3: str = Field(..., description="1 crisp, actionable area for improvement in communication or cultural fit skills, addressed in second person.")
 # class InterviewAnalysisState(BaseModel):
 #     history: List[Dict[Literal['human','ai'],str]] = Field(...,description="Log of interactions between interviewer and interviewee")
 #     communication: CommunicationSkills = Field(...,description="Communication skills of the interviewee")

@@ -20,60 +20,62 @@ from langchain_core.runnables.graph import CurveStyle, MermaidDrawMethod
 
 
 class AnalyticalSkills(BaseModel):
-    '''
-    You need to assign scores for the following analytical skills categories based on interaction history between interviewer and interviewee.
-
-    IMPORTANT: Only provide scores above 0 if there has been sufficient conversation and human responses to make an accurate assessment.
-    If there are fewer than 3 substantive human responses or insufficient discussion about a particular skill area,
-    assign 0 to indicate "Insufficient Data/Not Applicable".
-
-    Scoring Guidelines:
-    0 - Insufficient conversation between interviewer and interviewee/data to make an assessment, major offense occurred, completely wrong approach, or not applicable to the role.
-    10,20,30,40 - Varying degrees of poor performance: unseriousness, plainly wrong, or barely comprehensive.
-    50 - Average performance with basic understanding.
-    60 - Decent performance with solid fundamentals.
-    70 - Good performance with strong knowledge.
-    80 - Great performance with deep understanding.
-    90 - Amazing performance with expert-level insights.
-    100 - Flawless performance with exceptional mastery.
-
+    """
+    Evaluate analytical skills in a Case Study Interview based on the interaction history.
+    
+    Score each skill on a precise 0-100 scale. Use granular values (e.g., 67, 73, 82) NOT rounded multiples of 10.
+    
+    Performance Bands:
+    - 0: Insufficient data (fewer than 3 substantive responses) or major offense/misconduct
+    - 1-35: Poor - Significant gaps, wrong analysis, or lack of basic analytical thinking
+    - 36-50: Below Average - Some analytical ability but major weaknesses
+    - 51-60: Average - Adequate analysis, meets basic expectations
+    - 61-70: Good - Solid analytical thinking with consistent methodology
+    - 71-80: Very Good - Strong analytical skills with minor areas for improvement
+    - 81-90: Excellent - Expert-level analysis and problem-solving
+    - 91-100: Outstanding - Exceptional mastery, flawless analytical reasoning
+    
+    CRITICAL: Assign specific scores within ranges (e.g., 67, 73, 82) based on nuanced performance.
+    Do NOT use only multiples of 10 (10, 20, 30, etc.). Be precise and granular.
+    
     Before assigning any score above 0, ensure:
     1. The human has provided at least 3 meaningful responses related to that skill area.
     2. There has been sufficient back-and-forth discussion to gauge their knowledge.
     3. The human has demonstrated (or failed to demonstrate) the specific skill through their responses.
-    '''
-    problem_understanding: int = Field(..., description="The understanding of the problem")
-    hypothesis: int = Field(..., description="The hypothesis of the problem")
-    analysis: int = Field(..., description="The analysis of the problem")
-    synthesis: int = Field(..., description="The synthesis of the problem")
+    """
+    problem_understanding: int = Field(..., description="Depth of understanding of the case study problem, key issues, and constraints. Score 0-100 with granular precision (e.g., 68, 76, 84). 0 if insufficient discussion.")
+    hypothesis: int = Field(..., description="Quality of hypotheses formed, assumptions identified, and initial problem framing. Score 0-100 with granular precision (e.g., 72, 79, 87). 0 if insufficient discussion.")
+    analysis: int = Field(..., description="Thoroughness and quality of analysis - data interpretation, pattern recognition, root cause identification. Score 0-100 with granular precision (e.g., 65, 77, 88). 0 if insufficient discussion.")
+    synthesis: int = Field(..., description="Ability to synthesize information, connect insights, and form coherent conclusions. Score 0-100 with granular precision (e.g., 71, 81, 92). 0 if insufficient discussion.")
 
 class BusinessImpactSkills(BaseModel):
-    '''
-    You need to assign scores for the following business impact skills categories based on interaction history between interviewer and interviewee.
-
-    IMPORTANT: Only provide scores above 0 if there has been sufficient conversation and human responses to make an accurate assessment.
-    If there are fewer than 3 substantive human responses or insufficient discussion about a particular skill area,
-    assign 0 to indicate "Insufficient Data/Not Applicable".
-
-    Scoring Guidelines:
-    0 - Insufficient conversation between interviewer and interviewee/data to make an assessment, major offense occurred, completely wrong approach, or not applicable to the role.
-    10,20,30,40 - Varying degrees of poor performance: unseriousness, plainly wrong, or barely comprehensive.
-    50 - Average performance with basic understanding.
-    60 - Decent performance with solid fundamentals.
-    70 - Good performance with strong knowledge.
-    80 - Great performance with deep understanding.
-    90 - Amazing performance with expert-level insights.
-    100 - Flawless performance with exceptional mastery.
-
+    """
+    Evaluate business impact skills in a Case Study Interview based on the interaction history.
+    
+    Score each skill on a precise 0-100 scale. Use granular values (e.g., 67, 73, 82) NOT rounded multiples of 10.
+    
+    Performance Bands:
+    - 0: Insufficient data (fewer than 3 substantive responses) or major offense/misconduct
+    - 1-35: Poor - Significant gaps, poor business judgment, or lack of strategic thinking
+    - 36-50: Below Average - Some business awareness but major weaknesses
+    - 51-60: Average - Adequate business thinking, meets basic expectations
+    - 61-70: Good - Solid business acumen with consistent judgment
+    - 71-80: Very Good - Strong business impact orientation with minor areas for improvement
+    - 81-90: Excellent - Expert-level strategic thinking and business judgment
+    - 91-100: Outstanding - Exceptional mastery, transformative business insights
+    
+    CRITICAL: Assign specific scores within ranges (e.g., 67, 73, 82) based on nuanced performance.
+    Do NOT use only multiples of 10 (10, 20, 30, etc.). Be precise and granular.
+    
     Before assigning any score above 0, ensure:
     1. The human has provided at least 3 meaningful responses related to that skill area.
     2. There has been sufficient back-and-forth discussion to gauge their knowledge.
     3. The human has demonstrated (or failed to demonstrate) the specific skill through their responses.
-    '''
-    business_judgment: int = Field(..., description="The judgment of the business")
-    creativity: int = Field(..., description="The creativity of the business")
-    decision_making: int = Field(..., description="The decision making of the business")
-    impact_orientation: int = Field(..., description="The impact orientation of the business")
+    """
+    business_judgment: int = Field(..., description="Quality of business judgment, strategic thinking, and commercial awareness. Score 0-100 with granular precision (e.g., 69, 77, 85). 0 if insufficient discussion.")
+    creativity: int = Field(..., description="Creative and innovative thinking in problem-solving and solution design. Score 0-100 with granular precision (e.g., 64, 73, 86). 0 if insufficient discussion.")
+    decision_making: int = Field(..., description="Quality of decision-making process, trade-off analysis, and justification. Score 0-100 with granular precision (e.g., 71, 78, 88). 0 if insufficient discussion.")
+    impact_orientation: int = Field(..., description="Focus on business impact, ROI, and measurable outcomes. Score 0-100 with granular precision (e.g., 74, 82, 91). 0 if insufficient discussion.")
 
 class CaseStudyChatLogsFeedback(BaseModel):
     '''
@@ -89,16 +91,20 @@ class CaseStudyChatLogsFeedback(BaseModel):
     comment: List[str] = Field()
 
 class CaseStudyStrengthsAndAreasOfImprovements(BaseModel):
-    '''
-    You are given interaction log between interviewer(ai) and interviewee(human).
-    You need to first ensure that you have enough of a history to comment.
-    '''
-    strength1: str = Field(...,description="1 crisp points of strengths which you think interviewee(human) has in analytical and business impact skills strictly based on the question asked and answer provided and address them in second person.")
-    strength2: str = Field(...,description="1 crisp points of strengths which you think interviewee(human) has in analytical and business impact skills strictly based on the question asked and answer provided and address them in second person.")
-    strength3: str = Field(...,description="1 crisp points of strengths which you think interviewee(human) has in analytical and business impact skills strictly based on the question asked and answer provided and address them in second person.")
-    areas_of_improvements1: str = Field(...,description="1 crisp points of areas of improvements which you think interviewee(human) has in analytical and business impact skills strictly based on the question asked and answer provided and address them in second person.")
-    areas_of_improvements2: str = Field(...,description="1 crisp points of areas of improvements which you think interviewee(human) has in analytical and business impact skills strictly based on the question asked and answer provided and address them in second person.")
-    areas_of_improvements3: str = Field(...,description="1 crisp points of areas of improvements which you think interviewee(human) has in analytical and business impact skills strictly based on the question asked and answer provided and address them in second person.")
+    """
+    Based on the interaction history between interviewer (AI) and interviewee (human) in a Case Study Interview,
+    provide 3 specific strengths and 3 specific areas for improvement in their analytical and business impact skills.
+    
+    Focus on: problem understanding, hypothesis formation, analysis depth, synthesis, business judgment, creativity, decision-making, and impact orientation.
+    Address the interviewee in second person (e.g., "You demonstrated strong...", "Your analysis of...").
+    Be specific and actionable, strictly based on the questions asked and answers provided.
+    """
+    strength1: str = Field(..., description="1 crisp, specific strength in analytical or business impact skills, addressed in second person.")
+    strength2: str = Field(..., description="1 crisp, specific strength in analytical or business impact skills, addressed in second person.")
+    strength3: str = Field(..., description="1 crisp, specific strength in analytical or business impact skills, addressed in second person.")
+    areas_of_improvements1: str = Field(..., description="1 crisp, actionable area for improvement in analytical or business impact skills, addressed in second person.")
+    areas_of_improvements2: str = Field(..., description="1 crisp, actionable area for improvement in analytical or business impact skills, addressed in second person.")
+    areas_of_improvements3: str = Field(..., description="1 crisp, actionable area for improvement in analytical or business impact skills, addressed in second person.")
 
 def analytical_llm_Node(analytical_llm):
     def _Node(state:CaseStudyIntState) -> CaseStudyIntState:

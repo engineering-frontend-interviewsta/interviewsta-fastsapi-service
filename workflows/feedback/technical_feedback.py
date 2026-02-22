@@ -38,63 +38,65 @@ class CommunicationSkills(BaseModel):
 
 
 class TechnicalSkills(BaseModel):
-    '''
-    You need to assign scores for the following technical skills categories based on interaction history between interviewer and interviewee.
-
-    IMPORTANT: Only provide scores above 0 if there has been sufficient conversation and human responses to make an accurate assessment.
-    If there are fewer than 3 substantive human responses or insufficient discussion about a particular skill area,
-    assign 0 to indicate "Insufficient Data/Not Applicable".
-
-    Scoring Guidelines:
-    0 - Insufficient conversation between interviewer and interviewee/data to make an assessment, major offense occurred, completely wrong approach, or not applicable to the role
-    10,20,30,40 - Varying degrees of poor performance: unseriousness, plainly wrong, or barely comprehensive
-    50 - Average performance with basic understanding
-    60 - Decent performance with solid fundamentals
-    70 - Good performance with strong knowledge
-    80 - Great performance with deep understanding
-    90 - Amazing performance with expert-level insights
-    100 - Flawless performance with exceptional mastery
-
+    """
+    Evaluate technical skills in a Technical/Coding Interview based on the interaction history.
+    
+    Score each skill on a precise 0-100 scale. Use granular values (e.g., 67, 73, 82) NOT rounded multiples of 10.
+    
+    Performance Bands:
+    - 0: Insufficient data (fewer than 3 substantive responses) or major offense/misconduct
+    - 1-35: Poor - Significant gaps, wrong approaches, or lack of basic understanding
+    - 36-50: Below Average - Some understanding but major weaknesses
+    - 51-60: Average - Adequate fundamentals, meets basic expectations
+    - 61-70: Good - Solid knowledge and consistent performance
+    - 71-80: Very Good - Strong mastery with minor areas for improvement
+    - 81-90: Excellent - Expert-level understanding and application
+    - 91-100: Outstanding - Exceptional mastery, flawless execution
+    
+    CRITICAL: Assign specific scores within ranges (e.g., 67, 73, 82) based on nuanced performance.
+    Do NOT use only multiples of 10 (10, 20, 30, etc.). Be precise and granular.
+    
     Before assigning any score above 0, ensure:
-    1. The human has provided at least 3 meaningful responses related to that skill area
-    2. There has been sufficient back-and-forth discussion to gauge their knowledge
-    3. The human has demonstrated (or failed to demonstrate) the specific skill through their responses
-    '''
-    programming_language: int = Field(..., description="The strength of fundamentals in programming language (0 if insufficient discussion)")
-    framework: int = Field(..., description="Knowledge level of the coding framework (0 if insufficient discussion)")
-    algorithms: int = Field(..., description="Knowledge level of algorithms and optimization (0 if insufficient discussion)")
-    data_structures: int = Field(..., description="Knowledge level of data structures usage (0 if insufficient discussion)")
+    1. The human has provided at least 3 meaningful responses related to that skill area.
+    2. There has been sufficient back-and-forth discussion to gauge their knowledge.
+    3. The human has demonstrated (or failed to demonstrate) the specific skill through their responses.
+    """
+    programming_language: int = Field(..., description="Strength of fundamentals in programming language syntax, concepts, and best practices. Score 0-100 with granular precision (e.g., 68, 76, 84). 0 if insufficient discussion.")
+    framework: int = Field(..., description="Knowledge and effective use of coding frameworks, libraries, and tools. Score 0-100 with granular precision (e.g., 72, 79, 87). 0 if insufficient discussion.")
+    algorithms: int = Field(..., description="Understanding of algorithms, complexity analysis, and optimization techniques. Score 0-100 with granular precision (e.g., 65, 77, 88). 0 if insufficient discussion.")
+    data_structures: int = Field(..., description="Knowledge and appropriate usage of data structures. Score 0-100 with granular precision (e.g., 71, 81, 92). 0 if insufficient discussion.")
 
 
 
 
 class ProblemSolvingSkills(BaseModel):
-    '''
-    You need to assign scores for the following problem-solving skills categories based on interaction history between interviewer and interviewee.
-
-    IMPORTANT: Only provide scores above 0 if there has been sufficient conversation and human responses to make an accurate assessment.
-    If there are fewer than 3 substantive human responses or insufficient discussion about a particular skill area,
-    assign 0 to indicate "Insufficient Data/Not Applicable".
-
-    Scoring Guidelines:
-    0 - Insufficient conversation/data to make an assessment, major offense occurred, completely wrong approach, or not applicable to the role
-    10,20,30,40 - Varying degrees of poor performance: unseriousness, plainly wrong, or barely comprehensive
-    50 - Average performance with basic understanding
-    60 - Decent performance with solid fundamentals
-    70 - Good performance with strong knowledge
-    80 - Great performance with deep understanding
-    90 - Amazing performance with expert-level insights
-    100 - Flawless performance with exceptional mastery
-
+    """
+    Evaluate problem-solving skills in a Technical/Coding Interview based on the interaction history.
+    
+    Score each skill on a precise 0-100 scale. Use granular values (e.g., 67, 73, 82) NOT rounded multiples of 10.
+    
+    Performance Bands:
+    - 0: Insufficient data (fewer than 3 substantive responses) or major offense/misconduct
+    - 1-35: Poor - Significant gaps, wrong approaches, or lack of problem-solving ability
+    - 36-50: Below Average - Some problem-solving but major weaknesses
+    - 51-60: Average - Adequate approach, meets basic expectations
+    - 61-70: Good - Solid problem-solving with consistent methodology
+    - 71-80: Very Good - Strong analytical skills with minor areas for improvement
+    - 81-90: Excellent - Expert-level problem-solving and optimization
+    - 91-100: Outstanding - Exceptional mastery, flawless execution
+    
+    CRITICAL: Assign specific scores within ranges (e.g., 67, 73, 82) based on nuanced performance.
+    Do NOT use only multiples of 10 (10, 20, 30, etc.). Be precise and granular.
+    
     Before assigning any score above 0, ensure:
-    1. The human has provided at least 3 meaningful responses related to that skill area
-    2. There has been sufficient back-and-forth discussion to gauge their knowledge
-    3. The human has demonstrated (or failed to demonstrate) the specific skill through their responses
-    '''
-    approach: int = Field(..., description="The approach taken to solve technical problems (0 if insufficient discussion)")
-    optimization: int = Field(..., description="The ability to optimize their solution (0 if insufficient discussion)")
-    debugging: int = Field(..., description="The ability to find edge cases and rectify their code (0 if insufficient discussion)")
-    syntax: int = Field(..., description="The syntax correctness of the programming language (0 if insufficient discussion)")
+    1. The human has provided at least 3 meaningful responses related to that skill area.
+    2. There has been sufficient back-and-forth discussion to gauge their knowledge.
+    3. The human has demonstrated (or failed to demonstrate) the specific skill through their responses.
+    """
+    approach: int = Field(..., description="Quality of approach taken to solve technical problems - problem breakdown, strategy selection. Score 0-100 with granular precision (e.g., 69, 77, 85). 0 if insufficient discussion.")
+    optimization: int = Field(..., description="Ability to optimize solutions for time/space complexity and efficiency. Score 0-100 with granular precision (e.g., 64, 73, 86). 0 if insufficient discussion.")
+    debugging: int = Field(..., description="Ability to identify edge cases, bugs, and rectify code issues. Score 0-100 with granular precision (e.g., 71, 78, 88). 0 if insufficient discussion.")
+    syntax: int = Field(..., description="Syntax correctness and code quality in the programming language. Score 0-100 with granular precision (e.g., 74, 82, 91). 0 if insufficient discussion.")
 
 Label = Literal["correct", "incorrect", "partially-correct", "cross-question"]
 
@@ -129,16 +131,20 @@ class TechChatLogsFeedback(BaseModel):
 
 
 class Tech_Strengths_and_areas_of_improvements(BaseModel):
-    '''
-    You are given interaction log between interviewer(ai) and interviewee(human).
-    You need to first ensure that you have enough of a history to comment.
-    '''
-    strength1: str = Field(...,description="1 crisp points of strengths which you think interviewee(human) has in technical(programming language,framework knowledge,algorithms,data structures) and problem solving skills(approach,optimization,debugging and syntax) strictly based on the question asked and answer provided and address them in second person.")
-    strength2: str = Field(...,description="1 crisp points of strengths which you think interviewee(human) has in technical(programming language,framework knowledge,algorithms,data structures) and problem solving skills(approach,optimization,debugging and syntax) strictly based on the question asked and answer provided and address them in second person.")
-    strength3: str = Field(...,description="1 crisp points of strengths which you think interviewee(human) has in technical(programming language,framework knowledge,algorithms,data structures) and problem solving skills(approach,optimization,debugging and syntax) strictly based on the question asked and answer provided and address them in second person.")
-    areas_of_improvements1: str = Field(...,description="1 crisp points of areas of improvements which you think interviewee(human) has in technical(programming language,framework knowledge,algorithms,data structures) and problem solving skills(approach,optimization,debugging and syntax)strictly based on the question asked and answer provided and address them in second person.")
-    areas_of_improvements2: str = Field(...,description="1 crisp points of areas of improvements which you think interviewee(human) has in technical(programming language,framework knowledge,algorithms,data structures) and problem solving skills(approach,optimization,debugging and syntax)strictly based on the question asked and answer provided and address them in second person.")
-    areas_of_improvements3: str = Field(...,description="1 crisp points of areas of improvements which you think interviewee(human) has in technical(programming language,framework knowledge,algorithms,data structures) and problem solving skills(approach,optimization,debugging and syntax)strictly based on the question asked and answer provided and address them in second person.")
+    """
+    Based on the interaction history between interviewer (AI) and interviewee (human) in a Technical Interview,
+    provide 3 specific strengths and 3 specific areas for improvement in their technical and problem-solving skills.
+    
+    Focus on: programming language fundamentals, framework knowledge, algorithms, data structures, approach, optimization, debugging, and syntax.
+    Address the interviewee in second person (e.g., "You demonstrated strong...", "Your algorithm choice...").
+    Be specific and actionable, strictly based on the questions asked and answers provided.
+    """
+    strength1: str = Field(..., description="1 crisp, specific strength in technical or problem-solving skills, addressed in second person.")
+    strength2: str = Field(..., description="1 crisp, specific strength in technical or problem-solving skills, addressed in second person.")
+    strength3: str = Field(..., description="1 crisp, specific strength in technical or problem-solving skills, addressed in second person.")
+    areas_of_improvements1: str = Field(..., description="1 crisp, actionable area for improvement in technical or problem-solving skills, addressed in second person.")
+    areas_of_improvements2: str = Field(..., description="1 crisp, actionable area for improvement in technical or problem-solving skills, addressed in second person.")
+    areas_of_improvements3: str = Field(..., description="1 crisp, actionable area for improvement in technical or problem-solving skills, addressed in second person.")
 # class InterviewAnalysisState(BaseModel):
 #     history: List[Dict[Literal['human','ai'],str]] = Field(...,description="Log of interactions between interviewer and interviewee")
 #     communication: CommunicationSkills = Field(...,description="Communication skills of the interviewee")

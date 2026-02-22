@@ -13,6 +13,8 @@ from datetime import datetime
 from workflows.feedback.technical_feedback import build_tech_skills_feedback_graph, TechIntState
 from workflows.feedback.hr_feedback import build_hr_skills_feedback_graph, HRIntState
 from workflows.feedback.case_study_feedback import build_case_study_feedback_graph, CaseStudyIntState
+from workflows.feedback.communication_feedback import build_communication_feedback_graph
+from workflows.feedback.debate_feedback import build_debate_feedback_graph
 from services.interview_session import InterviewSessionManager
 from langgraph.checkpoint.redis import RedisSaver
 
@@ -505,3 +507,170 @@ def generate_case_study_feedback(self, session_id: str, history: str, user_email
             "error": str(e),
             "feedback": None
         }
+
+
+@celery_app.task(bind=True, base=FeedbackTask, name="tasks.feedback_tasks.generate_communication_feedback")
+def generate_communication_feedback(self, session_id: str, history: str, user_email: str) -> Dict[str, Any]:
+    """
+    Generate feedback for Communication interview (Speaking + Comprehension).
+    """
+    try:
+        logger.info(f"Generating communication feedback for session {session_id}")
+        google_key = os.getenv("GOOGLE_API_KEY", "")
+        graph = build_communication_feedback_graph(google_key)
+        result = graph.invoke({"history_log": history})
+
+        history, messages = get_interaction_history_from_redis(session_id)
+        interaction_log = extract_qa_pairs(messages)[1:]
+
+        s = result["speaking"]
+        c = result["comprehension"]
+        il = result["interaction_log_feedback"]
+        st = result["strengths_and_areas_of_improvements"]
+
+        feedback = {
+            "fluency_score": s.fluency,
+            "pronunciation_score": s.pronunciation,
+            "vocabulary_range_score": s.vocabulary_range,
+            "sentence_construction_score": s.sentence_construction,
+            "listening_comprehension_score": c.listening_comprehension,
+            "reading_comprehension_score": c.reading_comprehension,
+            "contextual_understanding_score": c.contextual_understanding,
+            "response_relevance_score": c.response_relevance,
+            "strengths": [st.strength1, st.strength2, st.strength3],
+            "areas_of_improvements": [st.areas_of_improvements1, st.areas_of_improvements2, st.areas_of_improvements3],
+            "interaction_log_feedback": {"answer_status": il.answer_status, "comment": il.comment},
+        }
+
+        redis_key = f"feedback:{session_id}"
+        self.redis_client.setex(redis_key, 3600, json.dumps(feedback))
+
+        session_manager = InterviewSessionManager(self.redis_client)
+        session = session_manager.get_session(session_id)
+        soft_skill_summary = None
+        big5_profile = None
+        try:
+            soft_skills_key = f"session:{session_id}:soft_skills_summary"
+            soft_skills_json = self.redis_client.get(soft_skills_key)
+            if soft_skills_json:
+                soft_skill_summary = json.loads(soft_skills_json)
+            big5_key = f"big5_profile:{session_id}"
+            big5_json = self.redis_client.get(big5_key)
+            if big5_json:
+                big5_profile = json.loads(big5_json)
+        except Exception as e:
+            logger.warning(f"Could not retrieve soft skills/Big-5 for session {session_id}: {e}")
+
+        try:
+            from services.drf_client import save_feedback_to_db
+            interview_type = session.get("interview_type", "Communication Interview") if session else "Communication Interview"
+            interview_test_id = session.get("interview_test_id") if session else None
+            duration = session.get("duration", 0) if session else 0
+            # Backend expects interaction_status_log in feedback_data (list of answer_status)
+            feedback_data = {**feedback, "interaction_status_log": il.answer_status}
+            db_saved = save_feedback_to_db(
+                user_email=user_email,
+                session_id=session_id,
+                interview_type=interview_type,
+                interview_test_id=interview_test_id,
+                duration_seconds=int(duration) if duration else 0,
+                feedback_data=feedback_data,
+                interaction_log=interaction_log,
+                soft_skill_summary=soft_skill_summary,
+                big5_profile=big5_profile,
+            )
+            if db_saved:
+                logger.info(f"Communication feedback saved to Django for session {session_id}")
+            else:
+                logger.warning(f"Failed to save communication feedback to Django for session {session_id}")
+        except Exception as e:
+            logger.error(f"Error saving communication feedback to Django: {e}", exc_info=True)
+
+        logger.info(f"Communication feedback generated for session {session_id}")
+        return {"status": "completed", "feedback": feedback}
+    except Exception as e:
+        logger.error(f"Error generating communication feedback: {e}", exc_info=True)
+        return {"status": "error", "error": str(e), "feedback": None}
+
+
+@celery_app.task(bind=True, base=FeedbackTask, name="tasks.feedback_tasks.generate_debate_feedback")
+def generate_debate_feedback(self, session_id: str, history: str, user_email: str) -> Dict[str, Any]:
+    """
+    Generate feedback for Debate interview (Argumentation + Persuasion).
+    """
+    try:
+        logger.info(f"Generating debate feedback for session {session_id}")
+        google_key = os.getenv("GOOGLE_API_KEY", "")
+        graph = build_debate_feedback_graph(google_key)
+        result = graph.invoke({"history_log": history})
+
+        history, messages = get_interaction_history_from_redis(session_id)
+        interaction_log = extract_qa_pairs(messages)[1:]
+
+        arg = result["argumentation"]
+        pers = result["persuasion"]
+        il = result["interaction_log_feedback"]
+        st = result["strengths_and_areas_of_improvements"]
+
+        feedback = {
+            "argument_structure_score": arg.argument_structure,
+            "evidence_usage_score": arg.evidence_usage,
+            "logical_reasoning_score": arg.logical_reasoning,
+            "counterargument_handling_score": arg.counterargument_handling,
+            "persuasiveness_score": pers.persuasiveness,
+            "rhetorical_skills_score": pers.rhetorical_skills,
+            "audience_awareness_score": pers.audience_awareness,
+            "conclusion_strength_score": pers.conclusion_strength,
+            "strengths": [st.strength1, st.strength2, st.strength3],
+            "areas_of_improvements": [st.areas_of_improvements1, st.areas_of_improvements2, st.areas_of_improvements3],
+            "interaction_log_feedback": {"answer_status": il.answer_status, "comment": il.comment},
+        }
+
+        redis_key = f"feedback:{session_id}"
+        self.redis_client.setex(redis_key, 3600, json.dumps(feedback))
+
+        session_manager = InterviewSessionManager(self.redis_client)
+        session = session_manager.get_session(session_id)
+        soft_skill_summary = None
+        big5_profile = None
+        try:
+            soft_skills_key = f"session:{session_id}:soft_skills_summary"
+            soft_skills_json = self.redis_client.get(soft_skills_key)
+            if soft_skills_json:
+                soft_skill_summary = json.loads(soft_skills_json)
+            big5_key = f"big5_profile:{session_id}"
+            big5_json = self.redis_client.get(big5_key)
+            if big5_json:
+                big5_profile = json.loads(big5_json)
+        except Exception as e:
+            logger.warning(f"Could not retrieve soft skills/Big-5 for session {session_id}: {e}")
+
+        try:
+            from services.drf_client import save_feedback_to_db
+            interview_type = session.get("interview_type", "Debate Interview") if session else "Debate Interview"
+            interview_test_id = session.get("interview_test_id") if session else None
+            duration = session.get("duration", 0) if session else 0
+            feedback_data = {**feedback, "interaction_status_log": il.answer_status}
+            db_saved = save_feedback_to_db(
+                user_email=user_email,
+                session_id=session_id,
+                interview_type=interview_type,
+                interview_test_id=interview_test_id,
+                duration_seconds=int(duration) if duration else 0,
+                feedback_data=feedback_data,
+                interaction_log=interaction_log,
+                soft_skill_summary=soft_skill_summary,
+                big5_profile=big5_profile,
+            )
+            if db_saved:
+                logger.info(f"Debate feedback saved to Django for session {session_id}")
+            else:
+                logger.warning(f"Failed to save debate feedback to Django for session {session_id}")
+        except Exception as e:
+            logger.error(f"Error saving debate feedback to Django: {e}", exc_info=True)
+
+        logger.info(f"Debate feedback generated for session {session_id}")
+        return {"status": "completed", "feedback": feedback}
+    except Exception as e:
+        logger.error(f"Error generating debate feedback: {e}", exc_info=True)
+        return {"status": "error", "error": str(e), "feedback": None}
