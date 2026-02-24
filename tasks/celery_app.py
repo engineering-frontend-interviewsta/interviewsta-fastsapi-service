@@ -77,8 +77,8 @@ celery_app.conf.update(
 default_exchange = Exchange("default", type="direct")
 
 celery_app.conf.task_queues = (
-    Queue("interview", exchange=Exchange("interview", delivery_mode=1), routing_key="interview", priority=10),
-    Queue("audio", exchange=Exchange("audio", delivery_mode=1), routing_key="audio", priority=8),
+    Queue("interview", exchange=default_exchange, routing_key="interview", priority=10),
+    Queue("audio", exchange=default_exchange, routing_key="audio", priority=8),
     Queue("resume", exchange=default_exchange, routing_key="resume", priority=5),
     Queue("feedback", exchange=default_exchange, routing_key="feedback", priority=5),
     Queue("default", exchange=default_exchange, routing_key="default", priority=1),
