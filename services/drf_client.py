@@ -82,6 +82,19 @@ def get_company_for_interview(interview_type_id: Optional[int] = None) -> Option
     return _get("/api/internal/interview-company/", params={"interview_type_id": interview_type_id})
 
 
+def get_interview_questions(interview_type_id: Optional[int] = None) -> Optional[Any]:
+    """
+    Fetch 5 interview questions (3 theoretical + 2 coding) for Company/Subject interviews from DRF.
+    GET internal/interview-questions/?interview_type_id=...
+
+    Returns:
+        Response with interview_type_id, company, subjects, theoretical_questions, coding_questions; or None on failure.
+    """
+    if interview_type_id is None:
+        return None
+    return _get("/api/internal/interview-questions/", params={"interview_type_id": interview_type_id})
+
+
 def save_resume_analysis_to_db(
     user_email: str,
     session_id: str,

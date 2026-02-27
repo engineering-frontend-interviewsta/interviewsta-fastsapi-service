@@ -154,30 +154,48 @@ class InterviewSessionManager:
             logger.error(f"Error getting status for session {session_id}: {e}")
             return None
     
-    def set_response(self, session_id: str, message: str, audio: Optional[str] = None, last_node: Optional[str] = None) -> bool:
+    def set_response(
+        self,
+        session_id: str,
+        message: str,
+        audio: Optional[str] = None,
+        last_node: Optional[str] = None,
+        *,
+        question_number: Optional[int] = None,
+        total_questions: Optional[int] = None,
+        **extra: Any,
+    ) -> bool:
         """
-        Store AI response for session
-        
+        Store AI response for session.
+
         Args:
             session_id: Session identifier
             message: AI response text
             audio: Base64 encoded audio (optional)
             last_node: Current workflow node
-            
+            question_number: Current question index (1-based) for Company/Subject interviews
+            total_questions: Total number of questions
+            **extra: Additional keys to store in response (e.g. for future use)
+
         Returns:
             bool: True if stored successfully
         """
         try:
-            response_data = {
+            response_data: Dict[str, Any] = {
                 "message": message,
                 "audio": audio,
                 "last_node": last_node,
-                "timestamp": datetime.utcnow().isoformat()
+                "timestamp": datetime.utcnow().isoformat(),
             }
-            
+            if question_number is not None:
+                response_data["question_number"] = question_number
+            if total_questions is not None:
+                response_data["total_questions"] = total_questions
+            response_data.update(extra)
+
             response_key = self._get_key(session_id, "response")
             self.redis.setex(response_key, self.expire_seconds, json.dumps(response_data))
-            
+
             return True
             
         except Exception as e:

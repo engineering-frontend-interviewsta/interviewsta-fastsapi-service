@@ -26,8 +26,8 @@ INTERVIEW_TYPES = ("Technical", "HR", "Company", "Subject", "CaseStudy", "Commun
 INTERRUPT_NODES: Dict[str, List[str]] = {
     "Technical": ["Greeting_after", "Technical_after", "Coding_after", "Project_after"],
     "HR": ["Greeting_after", "HR_after"],
-    "Company": ["Greeting_after", "Personalised_after", "Conceptual_after", "Project_after", "ProductScenario_after", "LogicalReasoning_after", "Coding_after"],
-    "Subject": ["Greeting_after", "Personalised_after", "Conceptual_after", "Coding_after"],
+    "Company": ["Greeting_after", "Personalised_after", "Theoretical_after", "Project_after", "ProductScenario_after", "LogicalReasoning_after", "Coding_after"],
+    "Subject": ["Greeting_after", "Personalised_after", "Theoretical_after", "Coding_after"],
     "CaseStudy": ["Greeting_after", "CaseStudy_after"],
     "Communication": ["Greeting_after", "Rapport_after", "PersonalDetails_after", "Speaking_after", "Speaking_feedback_after", "Comprehension_after", "Comprehension_feedback_after", "MCQ_after"],
     "Role-Based Interview": ["Greeting_after", "Personalised_after", "Technical_after", "Coding_after", "Project_after"],
