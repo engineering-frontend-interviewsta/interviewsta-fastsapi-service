@@ -53,7 +53,7 @@ services:
     #   apt-get update
     #   apt-get install -y tesseract-ocr poppler-utils
     #   pip install -r requirements.txt
-    dockerCommand: celery -A tasks.celery_app worker -Q interview,audio,resume,feedback --pool=gevent --concurrency=10 --prefetch-multiplier=1 --without-gossip --without-mingle --without-heartbeat --loglevel=info
+    dockerCommand: celery -A tasks.celery_app worker -Q interview,audio,resume,feedback --pool=prefork --concurrency=10 --prefetch-multiplier=1 --without-gossip --without-mingle --without-heartbeat --loglevel=info
     region: singapore
     envVars:
       - key: REDIS_URL
