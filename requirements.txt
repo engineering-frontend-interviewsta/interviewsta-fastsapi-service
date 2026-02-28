@@ -45,6 +45,8 @@ aiohttp==3.12.14
 requests==2.32.4
 python-jose[cryptography]==3.3.0
 
+gevent
+
 # Monitoring
 prometheus-client==0.21.0
 faiss-cpu>=1.9.0.post1,<1.10

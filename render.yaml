@@ -12,6 +12,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 2 -k uvicorn.workers.UvicornWorker main:app --bind 0.0.0.0:$PORT --timeout 90
     healthCheckPath: /health
+    region: singapore
     envVars:
       - key: REDIS_URL
         sync: false
@@ -52,7 +53,8 @@ services:
     #   apt-get update
     #   apt-get install -y tesseract-ocr poppler-utils
     #   pip install -r requirements.txt
-    dockerCommand: celery -A tasks.celery_app worker -Q interview,audio,resume,feedback --loglevel=info
+    dockerCommand: celery -A tasks.celery_app worker -Q interview,audio,resume,feedback --pool=prefork --concurrency=10 --prefetch-multiplier=1 --without-gossip --without-mingle --without-heartbeat --loglevel=info
+    region: singapore
     envVars:
       - key: REDIS_URL
         sync: false
@@ -91,6 +93,7 @@ services:
     runtime: docker
     # buildCommand: pip install -r requirements.txt
     dockerCommand: celery -A tasks.celery_app beat --loglevel=info
+    region: singapore
     envVars:
       - key: REDIS_URL
         sync: false

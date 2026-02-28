@@ -140,9 +140,12 @@ def _get_start_status_data_sync(
                         "audio_base64": response_data.get("audio"),
                         "last_node": response_data.get("last_node"),
                         "timestamp": response_data.get("timestamp"),
-                        "question_number": None,
-                        "total_questions": None,
+                        "question_number": response_data.get("question_number"),
+                        "total_questions": response_data.get("total_questions"),
+                        "question_raw_content": response_data.get("question_raw_content"),
                     }
+                    if session.get("interview_type") in ("Company", "Subject"):
+                        interview_ai_response["interview_questions"] = (session.get("payload") or {}).get("Questions")
                     interview_status = "ai_responded"
                 
                 interview_transcript = session_manager.get_transcript(session_id)
@@ -266,8 +269,9 @@ def _get_respond_status_data_sync(
                         "last_node": response_data.get("last_node"),
                         "timestamp": response_data.get("timestamp"),
                         # "interview_ai_response": response_data.get("interview_ai_response"),
-                        "question_number": None,
-                        "total_questions": None,
+                        "question_number": response_data.get("question_number"),
+                        "total_questions": response_data.get("total_questions"),
+                        "question_raw_content": response_data.get("question_raw_content"),
                     }
 
                     session_data = session_manager.get_session(session_id)
@@ -279,6 +283,8 @@ def _get_respond_status_data_sync(
                         interview_ai_response["comprehensionfeedback"] = session_data.get("comprehension_feedback")
                         interview_ai_response["currentmcq"] = session_data.get("current_mcq")
                         interview_ai_response["mcqfeedback"] = session_data.get("mcq_feedback")
+                    if session_data and session_data.get("interview_type") in ("Company", "Subject"):
+                        interview_ai_response["interview_questions"] = (session_data.get("payload") or {}).get("Questions")
                     interview_status = "ai_responded"
             
             interview_transcript = session_manager.get_transcript(session_id)
@@ -470,7 +476,8 @@ async def submit_response(
                 session_id,
                 request.audio_data,
                 request.text_response,
-                request.code_input
+                request.code_input,
+                request.skip_audio
             ],
             queue="interview"
         )
@@ -858,8 +865,9 @@ async def stream_interview_status(
                                 "audio_base64": response_data.get("audio"),  # Add audio_base64 field
                                 "last_node": response_data.get("last_node"),
                                 "timestamp": response_data.get("timestamp"),
-                                "question_number": None,
-                                "total_questions": None
+                                "question_number": response_data.get("question_number"),
+                                "total_questions": response_data.get("total_questions"),
+                                "question_raw_content": response_data.get("question_raw_content"),
                             }
                             
                             yield f"event: ai_response\ndata: {json.dumps(formatted_response)}\n\n"

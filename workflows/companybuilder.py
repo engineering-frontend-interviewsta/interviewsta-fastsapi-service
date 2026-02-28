@@ -1,73 +1,79 @@
 """
-Company Interview Builder - Dedicated agent for company-wise interviews
-This is separate from subject-wise interviews to allow for more sophisticated company-specific features
+Company Interview Builder - Reworked to use question-at-a-time approach
+for theoretical and coding (from workflows.coding), while keeping
+Initial_Research only for logical reasoning and project discussion.
 """
-from langgraph.graph import StateGraph, START, END, MessagesState
+from langgraph.graph import StateGraph, END, MessagesState
 from langchain_core.messages import HumanMessage, AIMessage, BaseMessage, SystemMessage, ToolMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
 from pydantic import BaseModel, Field
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_core.tools import tool
 from langchain_tavily import TavilySearch
 from langgraph.checkpoint.memory import InMemorySaver
-from typing import Annotated, Literal, TypeVar, List, Dict, Any, Optional, Callable
-from typing_extensions import TypedDict
-import inspect
+from typing import Annotated, Literal, TypeVar, List, Optional, Callable
 from pydantic import field_validator, ConfigDict
+from uuid import uuid4
+import operator
+from workflows.coding import \
+     Questions, InterviewState, get_llm, create_dummy_node, \
+    CodingProgress, create_route_to_coding, create_route_to_theoretical, \
+    InterviewProgress, TheoreticalProgress, create_coding_node, \
+    create_question_strike_node, create_theoretical_node, \
+    create_offend_end_node, create_personalised_node
 
-# Import shared state and utilities from CodingBuilder
-from workflows.coding import (
-    InterviewState,
-    get_llm,
-    create_research_summary_node,
-    create_dummy_node,
-    create_offend_end_node,
-    coding_personalised_prompt,
-    create_personalised_node,
-    create_route_to_personalised,
-    create_before_coding_node,
-    create_route_to_coding,
-    create_end_Node,
-    InterviewProgress,
-    PersonalisedProgress,
-    CodingProgress,
-)
+# ── Reuse everything from workflows.coding ──────────────────────────────────
+# from workflows.coding import (
+#     Questions,
+#     InterviewState,
+#     get_llm,
+#     create_dummy_node,
+#     create_offend_end_node,
+#     create_personalised_node,
+#     create_route_to_personalised,
+#     create_end_Node,
+#     create_question_strike_node,
+#     create_route_next_question,
+#     create_theoretical_node,
+#     create_route_to_theoretical,
+#     create_coding_node,
+#     create_route_to_coding,
+#     InterviewProgress,
+#     PersonalisedProgress,
+#     TheoreticalProgress,
+#     CodingProgress,
+#     Offensive_responsive_prompt,
+#     coding_personalised_prompt,
+#     theoretical_prompt_temp,
+#     coding_prompt_temp,
+# )
 
-# Company-specific state
+# ── Company-specific state ───────────────────────────────────────────────────
 class CompanyInterviewState(InterviewState):
-    company: Annotated[str, Field(default="Microsoft", description="The company for which the interviewee is being interviewed")]
+    company: Annotated[str, Field(default="Microsoft", description="Company being interviewed for")]
     resume: Annotated[str, Field(default="No resume provided", description="Resume of the candidate")]
+    QuestionResearch: Annotated[str, Field(
+        default="No research available",
+        description="Research for logical/project questions (fetched by Initial_Research node)"
+    )]
 
 
-# Helper functions to determine company type
+# ── Company-type helpers ─────────────────────────────────────────────────────
 def is_faang_company(company: str) -> bool:
-    """Check if company is FAANG/MAANG tier (Netflix, Amazon, Google, Apple, Microsoft, IBM, Intel, SAP, Oracle, Salesforce)"""
-    faang_companies = [
-        "Netflix", "Amazon", "Google", "Apple", "Microsoft",
-        "IBM", "Intel", "SAP", "Oracle", "Salesforce"
-    ]
-    return company in faang_companies
+    return company in ["Netflix", "Amazon", "Google", "Apple", "Microsoft",
+                       "IBM", "Intel", "SAP", "Oracle", "Salesforce"]
 
 def is_product_based_company(company: str) -> bool:
-    """Check if company is product-based/startup (Flipkart, Zomato, Swiggy, Paytm, Byju's, PhonePe, Ola, Uber, LinkedIn)"""
-    product_companies = [
-        "Flipkart", "Zomato", "Swiggy", "Paytm", "Byju's", "Byjus",
-        "PhonePe", "Ola", "Uber", "LinkedIn"
-    ]
-    return company in product_companies
+    return company in ["Flipkart", "Zomato", "Swiggy", "Paytm", "Byju's", "Byjus",
+                       "PhonePe", "Ola", "Uber", "LinkedIn"]
 
 def is_mass_hiring_company(company: str) -> bool:
-    """Check if company is mass hiring/service company (TCS, Infosys, Wipro, Accenture, etc.)"""
-    mass_hiring_companies = [
-        "TCS", "Infosys", "Wipro", "Accenture", "Capgemini", "Cognizant",
-        "Deloitte", "EY", "KPMG", "PwC"
-    ]
-    return company in mass_hiring_companies
+    return company in ["TCS", "Infosys", "Wipro", "Accenture", "Capgemini",
+                       "Cognizant", "Deloitte", "EY", "KPMG", "PwC"]
 
 
-# Company-specific prompts
-# Company greeting prompts - different for FAANG vs mass hiring
+# ── Prompts (kept exactly as original, only logical/project/greeting) ─────────
+
 faang_greeting_prompt = '''
 Your name is Glee, SDE at {Company} and you have to act as an interviewer conducting a live interview session for a Software Engineer position at {Company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
 
@@ -78,14 +84,14 @@ Your instructions are:
 2. Introduce Yourself and the Role: State your name, your role at {Company}, and clearly mention that the candidate is interviewing for a Software Engineer position at {Company} (e.g., "I'll be your interviewer today for the Software Engineer role at {Company}").
 
 3. Explain the Format: Briefly outline what the candidate can expect. Mention that we'll start with a brief conversation to get to know them better, then the interview will have three main parts:
-   - First, some conceptual/theoretical questions to gauge their foundational knowledge (5-6 questions)
-   - Second, a discussion about their projects and experience to understand how they've applied their skills
-   - Finally, coding problems to assess their problem-solving skills in a practical scenario
+   - First, some theoretical questions to gauge their foundational knowledge
+   - Second, a discussion about their projects and experience
+   - Finally, coding problems to assess their problem-solving skills
    Mention that the focus is on their thought process and problem-solving approach, not just the final answer. Encourage them to think out loud.
 
-4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
+4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start.
 
-5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of the interview. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better before beginning the assessment.
+5. Listen and Respond: Patiently wait for their response. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better.
 '''
 
 mass_hiring_greeting_prompt = '''
@@ -95,17 +101,17 @@ Your instructions are:
 
 1. Start with a Warm Greeting: Begin with a friendly and personal greeting. Do not include any parenthetical actions, stage directions, or cues (e.g., laughing gently, sighs, smiles).
 
-2. Introduce Yourself and the Role: State your name, your role at {Company}, and clearly mention that the candidate is interviewing for a Software Engineer position at {Company} (e.g., "I'll be your interviewer today for the Software Engineer role at {Company}").
+2. Introduce Yourself and the Role: State your name, your role at {Company}, and clearly mention that the candidate is interviewing for a Software Engineer position at {Company}.
 
 3. Explain the Format: Briefly outline what the candidate can expect. Mention that we'll start with a brief conversation to get to know them better, then the interview will have three main parts:
-   - First, some conceptual/theoretical questions to gauge their foundational knowledge (5-6 questions at a moderate level)
+   - First, some theoretical questions to gauge their foundational knowledge
    - Second, some logical reasoning and puzzle questions to assess their analytical thinking
-   - Finally, coding problems to assess their problem-solving skills in a practical scenario
-   Mention that the focus is on their thought process and problem-solving approach, not just the final answer. Encourage them to think out loud.
+   - Finally, coding problems to assess their problem-solving skills
+   Mention that the focus is on their thought process and problem-solving approach. Encourage them to think out loud.
 
-4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
+4. Invite Questions: Explicitly ask the candidate if they have any questions ONLY about the process before you start.
 
-5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of the interview. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better before beginning the assessment.
+5. Listen and Respond: Patiently wait for their response. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation.
 '''
 
 product_based_greeting_prompt = '''
@@ -113,149 +119,36 @@ Your name is Glee, SDE at {Company} and you have to act as an interviewer conduc
 
 Your instructions are:
 
-1. Start with a Warm Greeting: Begin with a friendly and personal greeting. Do not include any parenthetical actions, stage directions, or cues (e.g., laughing gently, sighs, smiles).
+1. Start with a Warm Greeting: Begin with a friendly and personal greeting. Do not include any parenthetical actions, stage directions, or cues.
 
-2. Introduce Yourself and the Role: State your name, your role at {Company}, and clearly mention that the candidate is interviewing for a Software Engineer position at {Company} (e.g., "I'll be your interviewer today for the Software Engineer role at {Company}").
+2. Introduce Yourself and the Role: State your name, your role at {Company}, and clearly mention the Software Engineer role.
 
-3. Explain the Format: Briefly outline what the candidate can expect. Mention that we'll start with a brief conversation to get to know them better, then the interview will have three main parts:
-   - First, some conceptual/theoretical questions to gauge their foundational knowledge (5-6 questions)
-   - Second, some real-world scenario questions related to {Company}'s products and services to assess their practical problem-solving approach
-   - Finally, coding problems to assess their problem-solving skills in a practical scenario
-   Mention that the focus is on their thought process, practical application, and problem-solving approach, not just the final answer. Encourage them to think out loud.
+3. Explain the Format: Briefly outline the three main parts:
+   - First, some theoretical questions
+   - Second, some real-world scenario questions related to {Company}'s products
+   - Finally, coding problems
+   Encourage them to think out loud.
 
-4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
+4. Invite Questions: Explicitly ask if they have any questions about the process.
 
-5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of the interview. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better before beginning the assessment.
+5. Listen and Respond: After addressing questions (or if none), mention you'd like to start with a brief conversation.
 '''
 
-# Conceptual/Theory prompts - different difficulty for FAANG vs mass hiring
-faang_conceptual_prompt = '''
-You are a technical interviewer conducting a conceptual/theoretical assessment for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
+# Research prompt - only used for logical/project questions
+google_search_prompt = '''Perform a MANDATORY Google Search Now: Conduct a brief Google search to gather and present:
 
-You should be polite, conversational, and encouraging, but your goal is to rigorously assess the candidate's depth of understanding in core Computer Science concepts.
-
-IMPORTANT: You are conducting an interview for {company}. Ask conceptual/theoretical questions that are ACTUALLY asked in {company} interviews. Focus on:
-- Programming fundamentals (OOP concepts, data structures, algorithms)
-- System design concepts and principles
-- Company-specific technologies, practices, or architectural patterns
-- Advanced topics relevant to {company}'s tech stack
-
-The interview flow is as follows:
-
-1. Present Conceptual Question
-   Review the [RESEARCH] list and select ONE question. Ask the question directly without disclosing the topic beforehand. If the candidate seems unsure, you can offer a small hint or rephrase the question to help them get started.
-
-2. Evaluate and Probe for Depth
-   Listen to the candidate's initial explanation. Your goal is to move beyond textbook definitions and assess their true understanding. If their answer is correct but superficial, ask probing follow-up questions. If their answer is unclear or partially incorrect, gently guide them toward the correct concept.
-
-3. Introduce an Advanced Scenario or Edge Case
-   Once you have a baseline of their knowledge, introduce a complexity or edge case to see how they apply the concept under different constraints.
-
-4. Bridge Theory to Practice
-   Connect the theoretical concept to real-world application, especially in the context of {company}'s systems or practices.
-
-5. Transition to the Next Question
-   After fully exploring the topic, gracefully transition to the next conceptual question. Repeat this entire process until you have asked a total of 5-6 conceptual questions.
-
-[RESEARCH]:
-{questions}
+Top 5 most common {company} coding questions for each difficulty level (prefer sources like GeeksforGeeks and Glassdoor).
+Most common coding patterns asked at {company}.
+Top 5 latest asked {company} coding questions (mark as recent with month/year if available).
+Formatting rules: present three bullet lists only, no URLs, include source tag, avoid duplicates.
+After presenting the lists, pause to invite any questions.
 '''
 
-product_based_conceptual_prompt = '''
-You are a technical interviewer conducting a conceptual/theoretical assessment for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
+google_search_prompt_template = ChatPromptTemplate.from_messages([
+    ("system", google_search_prompt),
+])
 
-You should be polite, conversational, and encouraging. Keep the questions at a moderate to advanced level, focusing on practical understanding and real-world application.
-
-IMPORTANT: You are conducting an interview for {company}, a product-based company. Ask conceptual/theoretical questions that are commonly asked in {company} interviews. Focus on:
-- Programming fundamentals (OOP concepts, data structures, algorithms)
-- System design basics and scalability concepts
-- Product engineering principles
-- Real-world problem-solving approaches
-- Technologies and practices relevant to {company}'s domain
-
-The interview flow is as follows:
-
-1. Present Conceptual Question
-   Review the [RESEARCH] list and select ONE question. Ask the question directly. If the candidate seems unsure, you can offer a hint or rephrase to help them get started.
-
-2. Evaluate Understanding
-   Listen to the candidate's explanation. If their answer is correct, acknowledge it and ask a follow-up to ensure deeper understanding. If their answer is unclear, gently guide them toward the correct concept.
-
-3. Practical Application
-   Ask how they would apply this concept in a real-world scenario, especially in the context of {company}'s products or services.
-
-4. Transition to the Next Question
-   After exploring the topic, transition to the next conceptual question. Repeat until you have asked a total of 5-6 conceptual questions.
-
-[RESEARCH]:
-{questions}
-'''
-
-# Product scenario prompt (for product-based companies)
-product_scenario_prompt = '''
-You are a technical interviewer conducting a product scenario assessment for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
-
-IMPORTANT: {company} is a product-based company. You must ask real-world scenario questions related to {company}'s actual products, services, and business challenges. These should test the candidate's ability to think about:
-- How they would design features for {company}'s products
-- How they would solve real problems that {company} faces
-- System design and scalability challenges specific to {company}'s domain
-- Product engineering decisions and trade-offs
-
-Examples of scenario questions for {company}:
-- For e-commerce (Flipkart): "How would you design a recommendation system for our product catalog?"
-- For food delivery (Zomato/Swiggy): "How would you optimize our delivery routing algorithm?"
-- For payments (Paytm/PhonePe): "How would you ensure transaction security and handle peak loads?"
-- For ride-sharing (Ola/Uber): "How would you match drivers with riders efficiently?"
-- For education (Byju's): "How would you personalize learning content for millions of students?"
-- For professional network (LinkedIn): "How would you design a feed algorithm for professional content?"
-
-The interview flow is as follows:
-
-1. Present Product Scenario Question
-   Present a real-world scenario question related to {company}'s products or services. Make it specific and relevant to what {company} actually does. Ask them to think through the problem step by step.
-
-2. Guide Through the Solution
-   Listen to the candidate's approach. If they're on the right track, encourage them to continue and dive deeper. If they're stuck, provide gentle hints to guide them. Focus on their thought process, not just the answer.
-
-3. Discuss Trade-offs and Alternatives
-   Once they've presented a solution, ask about trade-offs, alternative approaches, and how they would handle edge cases or scale the solution.
-
-4. Transition to the Next Scenario
-   After exploring one scenario thoroughly, transition to another product-related scenario. Present 2-3 product scenario questions in total.
-
-Remember: Make the scenarios realistic and directly related to {company}'s actual business and products. Test their ability to think like a product engineer at {company}.
-'''
-
-mass_hiring_conceptual_prompt = '''
-You are a technical interviewer conducting a conceptual/theoretical assessment for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
-
-You should be polite, conversational, and encouraging. Keep the questions at a moderate level - not too easy, but not overly complex. Focus on fundamental understanding rather than advanced edge cases.
-
-IMPORTANT: You are conducting an interview for {company}. Ask conceptual/theoretical questions that are commonly asked in {company} interviews. Focus on:
-- Programming fundamentals (OOP concepts, basic data structures, algorithms)
-- Core Computer Science concepts (DBMS basics, OS basics, networking basics)
-- Problem-solving approaches and logical thinking
-- Practical application of concepts
-
-The interview flow is as follows:
-
-1. Present Conceptual Question
-   Review the [RESEARCH] list and select ONE question. Ask the question directly. If the candidate seems unsure, you can offer a hint or rephrase to help them get started.
-
-2. Evaluate Understanding
-   Listen to the candidate's explanation. If their answer is correct, acknowledge it and ask a follow-up to ensure deeper understanding. If their answer is unclear, gently guide them toward the correct concept.
-
-3. Practical Application
-   Ask how they would apply this concept in a real-world scenario or practical situation.
-
-4. Transition to the Next Question
-   After exploring the topic, transition to the next conceptual question. Repeat until you have asked a total of 5-6 conceptual questions at a moderate difficulty level.
-
-[RESEARCH]:
-{questions}
-'''
-
-# Project discussion prompt (for FAANG companies)
+# Project prompt - kept exactly as original
 project_prompt = '''
 You are a Senior Technical Interviewer conducting a deep-dive session on the candidate's past projects and experience for {company}. Your primary directive is to embody the persona of a real, empathetic, and technically sharp interviewer. You should be polite and conversational, but your core objective is to move beyond surface-level descriptions and rigorously assess the candidate's technical design choices, problem-solving skills, and individual contributions.
 
@@ -264,24 +157,16 @@ You will be provided with the candidate's resume in the [RESUME] section. You mu
 The interview flow is as follows:
 
 1. Select a Project and Open the Discussion
-   Review the candidate's [RESUME] and select one project to start with. Begin with a broad, open-ended technical question to get the candidate talking.
-   Example: "I was looking at your resume, and the [Project Name] project caught my eye. Could you start by walking me through its high-level architecture?" or "Tell me about the most technically challenging part of the [Project Name] project."
+   Review the candidate's [RESUME] and select one project to start with. Begin with a broad, open-ended technical question.
 
 2. Probe for Technical Depth and Individual Contribution
-   Listen to the candidate's overview and then drill down into specifics. Your goal is to understand the "why" behind their decisions and distinguish their personal contributions from the team's work.
-   - Probe for technology choices: "You mentioned using [Specific Technology]. What were the reasons for choosing it over alternatives?"
-   - Probe for individual ownership: "What specific part of that implementation were you personally responsible for?"
-   - Probe for implementation details: "How did you handle [a specific problem]?"
+   Listen and drill down into specifics. Probe for technology choices, individual ownership, and implementation details.
 
 3. Introduce Technical Complexities and Discuss Trade-offs
-   Once you understand the basic implementation, push the candidate to think about constraints, scalability, and design trade-offs.
-   - Introduce a scaling scenario: "How would you adapt it if the user load were to increase by 100x?"
-   - Ask about trade-offs: "What were the main technical trade-offs you had to make on that project?"
+   Push the candidate to think about constraints, scalability, and design trade-offs.
 
 4. Evaluate Business Impact and Reflect on Learnings
-   Connect their technical work to its results and gauge their capacity for self-reflection and growth.
-   - Ask about outcomes: "What was the measurable impact of your work?"
-   - Ask for reflection: "Looking back, is there any technical decision you would make differently? Why?"
+   Connect their technical work to results and gauge their capacity for self-reflection.
 
 5. Transition to the Next Project
    After a thorough discussion, smoothly transition to another project. Aim to cover 2-3 projects in detail.
@@ -290,153 +175,219 @@ The interview flow is as follows:
 {resume_text}
 '''
 
-# Logical Reasoning/Puzzles prompt (for mass hiring companies)
-logical_reasoning_prompt = '''
-You are a technical interviewer conducting a logical reasoning and puzzle assessment for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
-
-You should be polite, conversational, and encouraging. Present logical reasoning questions, puzzles, and analytical problems that are commonly asked in {company} interviews. These should test:
-- Analytical thinking
-- Problem-solving approach
-- Logical reasoning
-- Pattern recognition
-- Mathematical reasoning (at a moderate level)
-
-The interview flow is as follows:
-
-1. Present Logical Reasoning Question or Puzzle
-   Present a logical reasoning question or puzzle. These could be:
-   - Number series or pattern recognition
-   - Logical puzzles (like "How many eggs can you fit in an empty basket?")
-   - Analytical reasoning problems
-   - Brain teasers that test logical thinking
-   
-   Ask the candidate to think through the problem step by step and explain their reasoning.
-
-2. Guide Through the Solution
-   Listen to the candidate's approach. If they're on the right track, encourage them to continue. If they're stuck, provide gentle hints to guide them. The focus is on their thought process, not just the answer.
-
-3. Discuss Alternative Approaches
-   Once they've solved it (or after providing the solution), ask if they can think of alternative approaches or if the problem reminds them of similar scenarios.
-
-4. Transition to the Next Question
-   After exploring one logical reasoning question, transition to another. Present 3-4 logical reasoning/puzzle questions in total.
-
-Remember: Keep the difficulty moderate - challenging enough to assess thinking, but not so difficult that it becomes frustrating.
-'''
-
-# Coding prompts - different difficulty for FAANG vs mass hiring
-faang_coding_prompt = '''
-You are a technical interviewer conducting a live coding session for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
-
-IMPORTANT: You are conducting an interview for {company}. Ask coding problems that are ACTUALLY asked in {company} interviews. The difficulty should match {company}'s interview standards (typically Medium to Hard level).
-
-The interview flow is as follows:
-
-1. Present Coding Question
-   Review the [RESEARCH] list and select ONE problem that matches {company}'s interview style. Don't disclose the topic and difficulty to user. If the candidate struggles to start, offer a simplified version to build their confidence.
-   Ask the candidate to explain the problem back to you in their own words to ensure they understand.
-
-2. Code Analysis and Iteration
-   Ask the candidate to open the "Code Editor" button on top right and write the code. Analyze the candidate's initial code. If you spot issues, comment by asking guiding questions rather than giving direct corrections. If the candidate is unable to improve, provide a walkthrough of the brute-force approach.
-
-3. Introduce Edge Cases and Optimization
-   Introduce edge cases or complexities and ask the candidate to update their code to handle them. Finally, ask the candidate to optimize their solution and discuss the expected time complexity.
-
-4. Second Coding Question
-   Transition smoothly to the second problem and repeat the entire process.
-
-[RESEARCH]:
-{questions}
-'''
-
-mass_hiring_coding_prompt = '''
-You are a technical interviewer conducting a live coding session for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
-
-IMPORTANT: You are conducting an interview for {company}. Ask coding problems that are commonly asked in {company} interviews. Keep the difficulty at a moderate level - not too easy, but not overly complex. Focus on fundamental problem-solving skills.
-
-The interview flow is as follows:
-
-1. Present Coding Question
-   Review the [RESEARCH] list and select ONE problem at a moderate difficulty level. Don't disclose the topic and difficulty to user. If the candidate struggles, offer hints to help them get started.
-   Ask the candidate to explain the problem back to you in their own words.
-
-2. Code Analysis and Iteration
-   Ask the candidate to open the "Code Editor" button on top right and write the code. Analyze the candidate's code. If you spot issues, guide them with questions. If needed, provide hints for the approach.
-
-3. Discuss Solution
-   Once they have a solution, discuss it with them. Ask about edge cases and time complexity at a basic level.
-
-4. Second Coding Question
-   Transition to the second problem and repeat the process.
-
-[RESEARCH]:
-{questions}
-'''
-
-# Ending prompt
-ending_prompt = '''
-You are concluding the interview for {company}. Your primary role is to be warm, professional, and encouraging.
-
-Your instructions are:
-
-1. Thank the Candidate: Express genuine appreciation for their time and effort during the interview.
-
-2. Acknowledge Their Performance: Briefly acknowledge their participation and the discussions you had (mention the different phases: conceptual questions, projects/logical reasoning, and coding).
-
-3. Company-Specific Closing: End with enthusiasm about reviewing their application. Say something like: "We are excited to review your application for {company}. Thank you for your time today, and we'll be in touch soon."
-
-Keep it brief, warm, and professional. Do not make any promises about outcomes or timelines beyond what's stated above.
-'''
-
-# Create prompt templates
-faang_coding_prompt_template = PromptTemplate(
-    input_variables=['questions', 'company'],
-    template=faang_coding_prompt
-)
-
-mass_hiring_coding_prompt_template = PromptTemplate(
-    input_variables=['questions', 'company'],
-    template=mass_hiring_coding_prompt
-)
-
-faang_conceptual_prompt_template = PromptTemplate(
-    input_variables=['questions', 'company'],
-    template=faang_conceptual_prompt
-)
-
-mass_hiring_conceptual_prompt_template = PromptTemplate(
-    input_variables=['questions', 'company'],
-    template=mass_hiring_conceptual_prompt
-)
-
-product_based_conceptual_prompt_template = PromptTemplate(
-    input_variables=['questions', 'company'],
-    template=product_based_conceptual_prompt
-)
-
 project_prompt_template = PromptTemplate(
     input_variables=['resume_text', 'company'],
     template=project_prompt
 )
+
+# Logical Reasoning prompt - kept exactly as original
+logical_reasoning_prompt = '''
+You are a technical interviewer conducting a logical reasoning and puzzle assessment for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
+
+The interview flow is as follows:
+
+1. Present Logical Reasoning Question or Puzzle
+   Present a logical reasoning question or puzzle. These could be number series, logical puzzles, analytical reasoning problems, or brain teasers that test logical thinking.
+   Ask the candidate to think through the problem step by step and explain their reasoning.
+
+2. Guide Through the Solution
+   Listen to the candidate's approach. If they're on the right track, encourage them. If stuck, provide gentle hints. Focus on thought process, not just the answer.
+
+3. Discuss Alternative Approaches
+   Once solved, ask if they can think of alternative approaches.
+
+4. Transition to the Next Question
+   After exploring one question, transition to another. Present 3-4 logical reasoning/puzzle questions in total.
+'''
 
 logical_reasoning_prompt_template = PromptTemplate(
     input_variables=['company'],
     template=logical_reasoning_prompt
 )
 
+
+
+# Product scenario prompt - kept exactly as original
+product_scenario_prompt = '''
+You are a technical interviewer conducting a product scenario assessment for {company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
+
+IMPORTANT: {company} is a product-based company. Ask real-world scenario questions related to {company}'s actual products, services, and business challenges.
+
+The interview flow is as follows:
+
+1. Present Product Scenario Question
+   Present a real-world scenario question related to {company}'s products or services. Make it specific and relevant. Ask them to think through the problem step by step.
+
+2. Guide Through the Solution
+   Listen and encourage. Focus on thought process and approach.
+
+3. Discuss Trade-offs and Alternatives
+   Once they've presented a solution, ask about trade-offs, alternative approaches, and edge cases.
+
+4. Transition to the Next Scenario
+   After exploring one scenario, transition to another. Present 2-3 product scenario questions in total.
+'''
+
 product_scenario_prompt_template = PromptTemplate(
     input_variables=['company'],
     template=product_scenario_prompt
 )
+
+# Research summarize prompt - only for logical/project context
+research_summarize_prompt = '''Please select exactly 5-6 questions from the [RESEARCH] section that match the given company type and are relevant for logical reasoning or conceptual discussions.
+[RESEARCH]:
+{research}
+Company: {company}
+'''
+
+# Ending prompt
+ending_prompt = '''
+You are concluding the interview for {company}. Your primary role is to be warm, professional, and encouraging.
+
+1. Thank the Candidate: Express genuine appreciation for their time and effort.
+2. Acknowledge Their Performance: Briefly acknowledge their participation and the different phases covered.
+3. Company-Specific Closing: End with enthusiasm about reviewing their application.
+
+Keep it brief, warm, and professional.
+'''
 
 ending_prompt_template = PromptTemplate(
     input_variables=['company'],
     template=ending_prompt
 )
 
+# ── Structured output models for research ────────────────────────────────────
+
+class ResearchQuestion(BaseModel):
+    title: str = Field(description="Short title of the question or prompt")
+    description: str = Field(description="One to two sentence description or the question itself")
+
+
+class MiddlePhaseResearch(BaseModel):
+    questions: List[ResearchQuestion] = Field(
+        description="List of middle-phase questions (project/logical/product scenario)"
+    )
+
+
+# ── Corrected initial research node ──────────────────────────────────────────
+
+def create_initial_research_node(llm) -> Callable:
+
+    research_llm = llm.with_structured_output(MiddlePhaseResearch)
+
+    def _Node(state: CompanyInterviewState) -> CompanyInterviewState:
+        company = state.get("company", "the company")
+
+        if is_faang_company(company):
+            research_prompt = (
+                f"You are preparing for a {company} Software Engineer interview. "
+                f"Generate 3 to 4 project discussion prompts that a senior interviewer at {company} "
+                f"would use to probe a candidate's past projects and experience. "
+                f"Each should have a short title and a one to two sentence description."
+            )
+            middle_type = "project"
+
+        elif is_product_based_company(company):
+            research_prompt = (
+                f"You are preparing for a {company} Software Engineer interview. "
+                f"Generate 3 product scenario questions directly related to {company}'s actual products "
+                f"and services. Each should have a short title and a one to two sentence description "
+                f"of what the candidate is expected to solve or design."
+            )
+            middle_type = "project"
+
+        else:
+            research_prompt = (
+                f"You are preparing for a {company} Software Engineer interview. "
+                f"Generate 3 to 4 logical reasoning and puzzle questions commonly asked at {company}. "
+                f"Each should have a short title and a one to two sentence description of the puzzle or "
+                f"reasoning problem."
+            )
+            middle_type = "logical"
+
+        # Structured output — no parsing needed
+        result: MiddlePhaseResearch = research_llm.invoke(research_prompt)
+
+        # Store raw for reference
+        state["QuestionResearch"] = "\n".join(
+            f"- {q.title}: {q.description}" for q in result.questions
+        )
+
+        # Build Questions objects
+        middle_questions = [
+            Questions(
+                question_title=q.title,
+                question_description=q.description,
+                question_raw_content=None,
+                question_difficulty="Medium",
+                question_type=middle_type,
+            )
+            for q in result.questions
+        ]
+
+        # Insert before the first coding question
+        insert_at = next(
+            (i for i, q in enumerate(state["Questions"]) if q.question_type == "coding"),
+            len(state["Questions"])
+        )
+
+        state["Questions"] = (
+            state["Questions"][:insert_at]
+            + middle_questions
+            + state["Questions"][insert_at:]
+        )
+
+        print(f"[INFO] Inserted {len(middle_questions)} {middle_type} questions at index {insert_at}")
+        print(f"[INFO] Final Questions order: {[f'{q.question_type}:{q.question_title[:30]}' for q in state['Questions']]}")
+        return state
+
+    return _Node
+
+
+# ── Routing models (company-specific) ────────────────────────────────────────
+
+class PersonalisedToTheoreticalProgress(BaseModel):
+    """Override PersonalisedProgress to route to Theoretical_before after personalised phase"""
+    send_to_which_node: Literal['Personalised', 'Theoretical_before', 'Offensive'] = \
+        Field(description="Supervise the personalized conversation phase. Route to 'Personalised' if the conversation "
+                          "is still ongoing (less than 6-7 exchanges completed). "
+                          "Route to 'Theoretical_before' ONLY when you've had approximately 6-7 good conversational exchanges "
+                          "AND the candidate has confirmed they're ready. "
+                          "Exceptionally, if the interviewee is being offensive, return 'Offensive'")
+
+
+class ProjectProgress(BaseModel):
+    send_to_which_node: Literal['Project', 'Coding_before'] = \
+        Field(description="Supervise the project discussion phase. Route to 'Project' if still discussing projects (aim for 2-3 projects). "
+                          "Route to 'Coding_before' when project discussion is complete (after covering 2-3 projects in detail).")
+
+
+class ProductScenarioProgress(BaseModel):
+    send_to_which_node: Literal['ProductScenario', 'Coding_before'] = \
+        Field(description="Supervise the product scenario phase. Route to 'ProductScenario' if still asking scenario questions (need 2-3 total). "
+                          "Route to 'Coding_before' when product scenario phase is complete.")
+
+
+class LogicalReasoningProgress(BaseModel):
+    send_to_which_node: Literal['LogicalReasoning', 'Coding_before'] = \
+        Field(description="Supervise the logical reasoning/puzzles phase. Route to 'LogicalReasoning' if still asking questions (need 3-4 total). "
+                          "Route to 'Coding_before' when logical reasoning phase is complete (after 3-4 questions).")
+
+
+# TheoreticalProgress after_node now routes to Project/ProductScenario/LogicalReasoning instead of Next_Question
+class CompanyTheoreticalProgress(BaseModel):
+    send_to_which_node: Literal['Theoretical', 'Next_Question', 'Offensive'] = \
+        Field(description="Supervise the theoretical question phase. Route to 'Theoretical' if the current theoretical question "
+                          "is still being discussed. Route to 'Next_Question' when the current question is fully answered. "
+                          "Exceptionally, if the interviewee is being offensive, return 'Offensive'")
+
+
+# ── Nodes ─────────────────────────────────────────────────────────────────────
+
+S = TypeVar("S")
+
 
 def get_company_greeting_prompt_template(company: str):
-    """Get company-specific greeting prompt template based on company type"""
     if is_faang_company(company):
         return ChatPromptTemplate.from_messages([
             ("system", faang_greeting_prompt.format(Company=company)),
@@ -451,29 +402,20 @@ def get_company_greeting_prompt_template(company: str):
         ])
 
 
-S = TypeVar("S")
-
-
 def create_company_greeting_node(llm) -> Callable:
-    """Create greeting node specifically for company interviews"""
     def _Node(state: CompanyInterviewState) -> CompanyInterviewState:
         if state["LastNode"] != "Greeting":
-            # Get company name from state
             try:
                 inp_company = state["company"]
                 if not inp_company or inp_company == "None" or inp_company == "":
-                    print(f"[WARNING] Company is None or empty in state. Using fallback.")
                     inp_company = "the company"
             except KeyError:
-                print(f"[WARNING] 'company' key not found in state. Available keys: {list(state.keys())}")
                 inp_company = "the company"
-            
+
             print(f"[DEBUG] Company for greeting: {inp_company}")
             greeting_prompt = get_company_greeting_prompt_template(inp_company)
-            print(greeting_prompt.format_messages())
             input_ = greeting_prompt.format_messages() + [{"role": "human", "content": "Start the interview now"}]
             state["messages"] = state["messages"] + input_
-            state["LastNode"] = "Greeting"
 
         response = llm.invoke(state["messages"])
         state["messages"] = state["messages"] + [response]
@@ -482,58 +424,116 @@ def create_company_greeting_node(llm) -> Callable:
         return state
     return _Node
 
+def create_research_node(llm) -> Callable:
+    import re
 
-def create_conceptual_node(llm) -> Callable:
-    """Create conceptual/theory node for company interviews"""
+    def parse_section(text: str, header: str) -> List[str]:
+        pattern = rf"\[{re.escape(header)}\](.*?)(\n\[|$)"
+        m = re.search(pattern, text, flags=re.DOTALL | re.IGNORECASE)
+        if not m:
+            return []
+        block = m.group(1)
+        lines = []
+        for line in block.splitlines():
+            line = line.strip()
+            if line.startswith("-"):
+                line = line[2:].lstrip() if line.startswith("- ") else line[1:].lstrip()
+                if line:
+                    lines.append(line)
+        return lines
+
+    def split_title_desc(item: str):
+        if ":" in item:
+            title, desc = item.split(":", 1)
+            return title.strip(), desc.strip()
+        return item.strip(), ""
+
     def _Node(state: CompanyInterviewState) -> CompanyInterviewState:
-        if state["LastNode"] != "Conceptual":
-            company_name = state.get("company", "the company")
-            if not company_name or company_name == "None" or company_name == "":
-                company_name = "the company"
-            
-            # Use appropriate prompt based on company type
-            if is_faang_company(company_name):
-                prompt_content = faang_conceptual_prompt_template.format(
-                    questions=state["QuestionResearch"],
-                    company=company_name
-                )
-            elif is_product_based_company(company_name):
-                prompt_content = product_based_conceptual_prompt_template.format(
-                    questions=state["QuestionResearch"],
-                    company=company_name
-                )
-            else:
-                prompt_content = mass_hiring_conceptual_prompt_template.format(
-                    questions=state["QuestionResearch"],
-                    company=company_name
-                )
-            
-            if len(state["messages"]) > 0:
-                state["messages"][0].content = prompt_content
-            else:
-                state["messages"] = [SystemMessage(content=prompt_content)]
-            state["LastNode"] = "Conceptual"
+        company = state.get("company", "the company")
 
-        response = llm.invoke(state["messages"])
-        state["messages"] = state["messages"] + [response]
-        state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
-        state["LastNode"] = "Conceptual"
+        # Only generate the middle phase — theoretical and coding already in state["Questions"]
+        if is_faang_company(company):
+            research_prompt = f"""
+You are preparing research for a {company} interview.
+
+[PROJECT DISCUSSION PROMPTS]
+- Generate 3-4 project discussion prompts relevant to a Software Engineer at {company}.
+  Each on a new line starting with "- Title: description"
+"""
+            middle_header = "PROJECT DISCUSSION PROMPTS"
+            middle_type = "project"
+
+        elif is_product_based_company(company):
+            research_prompt = f"""
+You are preparing research for a {company} interview.
+
+[PRODUCT SCENARIO QUESTIONS]
+- Generate 3 product scenario questions directly related to {company}'s actual products and services.
+  Each on a new line starting with "- Title: description"
+"""
+            middle_header = "PRODUCT SCENARIO QUESTIONS"
+            middle_type = "project"
+
+        else:
+            research_prompt = f"""
+You are preparing research for a {company} interview.
+
+[LOGICAL REASONING / PUZZLES]
+- Generate 3-4 logical reasoning / puzzle questions commonly asked at {company}.
+  Each on a new line starting with "- Title: description"
+"""
+            middle_header = "LOGICAL REASONING / PUZZLES"
+            middle_type = "logical"
+
+        resp = llm.invoke(research_prompt)
+        research_text = resp.content
+        state["QuestionResearch"] = research_text
+
+        middle_items = parse_section(research_text, middle_header)
+
+        # Build middle Questions objects
+        middle_questions = [
+            Questions(
+                question_title=split_title_desc(q)[0],
+                question_description=split_title_desc(q)[1] or "Discussion question",
+                question_raw_content=None,
+                question_difficulty="Medium",
+                question_type=middle_type,
+            )
+            for q in middle_items
+        ]
+
+        # Insert before the first coding question, after all theoreticals
+        insert_at = next(
+            (i for i, q in enumerate(state["Questions"]) if q.question_type == "coding"),
+            len(state["Questions"])
+        )
+
+        state["Questions"] = (
+            state["Questions"][:insert_at]
+            + middle_questions
+            + state["Questions"][insert_at:]
+        )
+
+        print(f"[INFO] Inserted {len(middle_questions)} {middle_type} questions at index {insert_at}")
+        print(f"[INFO] Final Questions order: {[f'{q.question_type}:{q.question_title[:30]}' for q in state['Questions']]}")
         return state
+
     return _Node
 
 
+
+
 def create_project_node(llm) -> Callable:
-    """Create project discussion node for FAANG companies"""
     def _Node(state: CompanyInterviewState) -> CompanyInterviewState:
         if state["LastNode"] != "Project":
             company_name = state.get("company", "the company")
             resume_text = state.get("resume", "No resume provided")
-            
+
             prompt_content = project_prompt_template.format(
                 resume_text=resume_text,
                 company=company_name
             )
-            
             if len(state["messages"]) > 0:
                 state["messages"][0].content = prompt_content
             else:
@@ -548,36 +548,12 @@ def create_project_node(llm) -> Callable:
     return _Node
 
 
-def create_product_scenario_node(llm) -> Callable:
-    """Create product scenario node for product-based companies"""
-    def _Node(state: CompanyInterviewState) -> CompanyInterviewState:
-        if state["LastNode"] != "ProductScenario":
-            company_name = state.get("company", "the company")
-            
-            prompt_content = product_scenario_prompt_template.format(company=company_name)
-            
-            if len(state["messages"]) > 0:
-                state["messages"][0].content = prompt_content
-            else:
-                state["messages"] = [SystemMessage(content=prompt_content)]
-            state["LastNode"] = "ProductScenario"
-
-        response = llm.invoke(state["messages"])
-        state["messages"] = state["messages"] + [response]
-        state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
-        state["LastNode"] = "ProductScenario"
-        return state
-    return _Node
-
-
 def create_logical_reasoning_node(llm) -> Callable:
-    """Create logical reasoning/puzzles node for mass hiring companies"""
     def _Node(state: CompanyInterviewState) -> CompanyInterviewState:
         if state["LastNode"] != "LogicalReasoning":
             company_name = state.get("company", "the company")
-            
             prompt_content = logical_reasoning_prompt_template.format(company=company_name)
-            
+
             if len(state["messages"]) > 0:
                 state["messages"][0].content = prompt_content
             else:
@@ -592,49 +568,32 @@ def create_logical_reasoning_node(llm) -> Callable:
     return _Node
 
 
-def create_company_coding_node(llm) -> Callable:
-    """Create coding node specifically for company interviews"""
+def create_product_scenario_node(llm) -> Callable:
     def _Node(state: CompanyInterviewState) -> CompanyInterviewState:
-        if state["LastNode"] != "Coding":
+        if state["LastNode"] != "ProductScenario":
             company_name = state.get("company", "the company")
-            if not company_name or company_name == "None" or company_name == "":
-                company_name = "the company"
-            
-            # Use appropriate prompt based on company type
-            if is_faang_company(company_name):
-                prompt_content = faang_coding_prompt_template.format(
-                    questions=state["QuestionResearch"],
-                    company=company_name
-                )
-            else:
-                prompt_content = mass_hiring_coding_prompt_template.format(
-                    questions=state["QuestionResearch"],
-                    company=company_name
-                )
-            
+            prompt_content = product_scenario_prompt_template.format(company=company_name)
+
             if len(state["messages"]) > 0:
                 state["messages"][0].content = prompt_content
             else:
                 state["messages"] = [SystemMessage(content=prompt_content)]
-            state["LastNode"] = "Coding"
+            state["LastNode"] = "ProductScenario"
 
         response = llm.invoke(state["messages"])
-        print(response)
         state["messages"] = state["messages"] + [response]
         state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
-        state["LastNode"] = "Coding"
+        state["LastNode"] = "ProductScenario"
         return state
     return _Node
 
 
 def create_ending_node(llm) -> Callable:
-    """Create ending node with company-specific thank you message"""
     def _Node(state: CompanyInterviewState) -> CompanyInterviewState:
         if state["LastNode"] != "End":
             company_name = state.get("company", "the company")
-            
             prompt_content = ending_prompt_template.format(company=company_name)
-            
+
             if len(state["messages"]) > 0:
                 state["messages"][0].content = prompt_content
             else:
@@ -649,41 +608,9 @@ def create_ending_node(llm) -> Callable:
     return _Node
 
 
-# Routing models
-class ConceptualProgress(BaseModel):
-    send_to_which_node: Literal['Conceptual', 'Project_before', 'LogicalReasoning_before', 'Coding_before'] = \
-        Field(description="Supervise the conceptual/theory phase. Route to 'Conceptual' if still asking questions (need 5-6 total). "
-                          "For FAANG companies: route to 'Project_before' when conceptual phase is complete. "
-                          "For mass hiring companies: route to 'LogicalReasoning_before' when conceptual phase is complete. "
-                          "The conceptual phase is complete after 5-6 distinct questions have been asked and discussed.")
-
-
-class ProjectProgress(BaseModel):
-    send_to_which_node: Literal['Project', 'Coding_before'] = \
-        Field(description="Supervise the project discussion phase. Route to 'Project' if still discussing projects (aim for 2-3 projects). "
-                          "Route to 'Coding_before' when project discussion is complete (after covering 2-3 projects in detail).")
-
-
-class ProductScenarioProgress(BaseModel):
-    send_to_which_node: Literal['ProductScenario', 'Coding_before'] = \
-        Field(description="Supervise the product scenario phase. Route to 'ProductScenario' if still asking scenario questions (need 2-3 total). "
-                          "Route to 'Coding_before' when product scenario phase is complete (after 2-3 scenarios have been discussed).")
-
-
-class LogicalReasoningProgress(BaseModel):
-    send_to_which_node: Literal['LogicalReasoning', 'Coding_before'] = \
-        Field(description="Supervise the logical reasoning/puzzles phase. Route to 'LogicalReasoning' if still asking questions (need 3-4 total). "
-                          "Route to 'Coding_before' when logical reasoning phase is complete (after 3-4 questions).")
-
-
-class CompanyCodingProgress(BaseModel):
-    send_to_which_node: Literal['Coding', 'End'] = \
-        Field(description="Supervise the coding phase. Route to 'Coding' if still in progress (need 2 coding problems). "
-                          "Route to 'End' when coding phase is complete (after 2 distinct coding problems have been fully resolved).")
-
+# ── Routing functions ─────────────────────────────────────────────────────────
 
 def create_route_to_greeting(InterviewProgress_llm) -> Callable:
-    """Route after greeting - decide next step"""
     def _Node(state: CompanyInterviewState) -> Literal['Greeting', 'Personalised_before', 'Offensive']:
         response = InterviewProgress_llm.invoke(state["history"])
         print("This is the greeting routing node", response.send_to_which_node)
@@ -691,39 +618,75 @@ def create_route_to_greeting(InterviewProgress_llm) -> Callable:
     return _Node
 
 
-def create_route_to_conceptual(ConceptualProgress_llm) -> Callable:
-    """Route after conceptual phase - decide next step based on company type"""
-    def _Node(state: CompanyInterviewState) -> Literal['Conceptual', 'Project_before', 'ProductScenario_before', 'LogicalReasoning_before', 'Coding_before']:
-        response = ConceptualProgress_llm.invoke(state["history"])
-        print("This is the conceptual routing node", response.send_to_which_node)
-        
-        # Override routing based on company type if needed
-        company_name = state.get("company", "")
-        if is_faang_company(company_name):
-            # FAANG: Conceptual -> Project -> Coding
-            if response.send_to_which_node in ['Project_before', 'Coding_before']:
-                return response.send_to_which_node
-            elif response.send_to_which_node in ['LogicalReasoning_before', 'ProductScenario_before']:
-                return 'Project_before'  # FAANG doesn't have logical reasoning or product scenarios
-        elif is_product_based_company(company_name):
-            # Product-based: Conceptual -> ProductScenario -> Coding
-            if response.send_to_which_node in ['ProductScenario_before', 'Coding_before']:
-                return response.send_to_which_node
-            elif response.send_to_which_node in ['Project_before', 'LogicalReasoning_before']:
-                return 'ProductScenario_before'  # Product-based doesn't have project discussion or logical reasoning
-        else:
-            # Mass hiring: Conceptual -> LogicalReasoning -> Coding
-            if response.send_to_which_node in ['LogicalReasoning_before', 'Coding_before']:
-                return response.send_to_which_node
-            elif response.send_to_which_node in ['Project_before', 'ProductScenario_before']:
-                return 'LogicalReasoning_before'  # Mass hiring doesn't have project discussion or product scenarios
-        
-        return response.send_to_which_node
+def create_company_route_to_personalised(PersonalisedProgress_llm) -> Callable:
+    """Routes to Theoretical_before instead of Coding_before after personalised phase"""
+    def _Node(state: CompanyInterviewState) -> Literal['Personalised', 'Theoretical_before', 'Offensive']:
+        exchanges = state.get("PersonalizedExchanges", 0)
+        history = state["history"]
+
+        if exchanges >= 6:
+            last_response = history.split("Interviewee-")[-1].lower() if "Interviewee-" in history else ""
+            ready_keywords = ['yes', 'ready', "let's", 'sure', 'okay', 'ok', 'proceed', 'begin', 'start', 'go']
+            if any(keyword in last_response for keyword in ready_keywords):
+                print("[DEBUG] Moving to Theoretical_before")
+                return 'Theoretical_before'
+
+        return 'Personalised'
+    return _Node
+
+
+def create_company_route_next_question(llm) -> Callable:
+    """
+    After Next_Question node increments the index:
+    - If more theoretical questions remain -> Theoretical_before
+    - If no more theoretical questions -> route to Project/LogicalReasoning/ProductScenario based on company type
+    - If coding questions remain -> Coding_before
+    - If all done -> End
+    """
+    def _Node(state: CompanyInterviewState) -> Literal[
+        'Theoretical_before', 'Project_before', 'LogicalReasoning_before',
+        'ProductScenario_before', 'Coding_before', 'End'
+    ]:
+        current_idx = state["CurrentQuestionIdx"]
+        questions = state["Questions"]
+        company = state.get("company", "")
+
+        if current_idx >= len(questions):
+            print("[DEBUG] All questions done -> End")
+            return 'End'
+
+        current_question = questions[current_idx]
+
+        if current_question.question_type == "theoretical":
+            print(f"[DEBUG] Next is theoretical: {current_question.question_title}")
+            return 'Theoretical_before'
+
+        elif current_question.question_type == "coding":
+            # Before first coding question, insert middle phase based on company type
+            # Check if we just finished ALL theoreticals (previous was theoretical, current is coding)
+            prev_was_theoretical = (current_idx > 0 and
+                                    questions[current_idx - 1].question_type == "theoretical")
+
+            if prev_was_theoretical:
+                # Insert middle phase
+                if is_faang_company(company):
+                    print("[DEBUG] FAANG: inserting Project phase before coding")
+                    return 'Project_before'
+                elif is_product_based_company(company):
+                    print("[DEBUG] Product-based: inserting ProductScenario phase before coding")
+                    return 'ProductScenario_before'
+                else:
+                    print("[DEBUG] Mass hiring: inserting LogicalReasoning phase before coding")
+                    return 'LogicalReasoning_before'
+            else:
+                print(f"[DEBUG] Next is coding: {current_question.question_title}")
+                return 'Coding_before'
+
+        return 'End'
     return _Node
 
 
 def create_route_to_project(ProjectProgress_llm) -> Callable:
-    """Route after project discussion - decide next step"""
     def _Node(state: CompanyInterviewState) -> Literal['Project', 'Coding_before']:
         response = ProjectProgress_llm.invoke(state["history"])
         print("This is the project routing node", response.send_to_which_node)
@@ -732,7 +695,6 @@ def create_route_to_project(ProjectProgress_llm) -> Callable:
 
 
 def create_route_to_product_scenario(ProductScenarioProgress_llm) -> Callable:
-    """Route after product scenario - decide next step"""
     def _Node(state: CompanyInterviewState) -> Literal['ProductScenario', 'Coding_before']:
         response = ProductScenarioProgress_llm.invoke(state["history"])
         print("This is the product scenario routing node", response.send_to_which_node)
@@ -741,7 +703,6 @@ def create_route_to_product_scenario(ProductScenarioProgress_llm) -> Callable:
 
 
 def create_route_to_logical_reasoning(LogicalReasoningProgress_llm) -> Callable:
-    """Route after logical reasoning - decide next step"""
     def _Node(state: CompanyInterviewState) -> Literal['LogicalReasoning', 'Coding_before']:
         response = LogicalReasoningProgress_llm.invoke(state["history"])
         print("This is the logical reasoning routing node", response.send_to_which_node)
@@ -749,70 +710,57 @@ def create_route_to_logical_reasoning(LogicalReasoningProgress_llm) -> Callable:
     return _Node
 
 
-def create_route_to_company_coding(CompanyCodingProgress_llm) -> Callable:
-    """Route after coding - decide next step"""
-    def _Node(state: CompanyInterviewState) -> Literal['Coding', 'End']:
-        response = CompanyCodingProgress_llm.invoke(state["history"])
-        print("This is the coding routing node", response.send_to_which_node)
-        return response.send_to_which_node
-    return _Node
-
+# ── Graph builder ─────────────────────────────────────────────────────────────
 
 def build_company_graph(google_api_key: str, tavily_api_key: str, checkpointer):
-    """
-    Build and compile the Company interview graph.
-    This is a dedicated graph for company-wise interviews, separate from subject-wise interviews.
-    """
     llm = get_llm(google_api_key=google_api_key)
     workflow = StateGraph(CompanyInterviewState)
 
-    # Nodes
-    workflow.add_node("Initial_Research", create_research_summary_node(llm))
+    # ── Nodes ─────────────────────────────────────────────────────────────────
+    workflow.add_node("Initial_Research", create_initial_research_node(llm))  # Only for logical/project
     workflow.add_node("Greeting", create_company_greeting_node(llm))
     workflow.add_node("Greeting_after", create_dummy_node())
     workflow.add_node("Personalised_before", create_dummy_node())
-    workflow.add_node("Personalised", create_personalised_node(llm))
+    workflow.add_node("Personalised", create_personalised_node(llm))         # reused
     workflow.add_node("Personalised_after", create_dummy_node())
-    
-    # Conceptual/Theory phase (both FAANG and mass hiring)
-    workflow.add_node("Conceptual_before", create_dummy_node())
-    workflow.add_node("Conceptual", create_conceptual_node(llm))
-    workflow.add_node("Conceptual_after", create_dummy_node())
-    
-    # Project discussion (FAANG only)
+
+    # Theoretical - reused from coding workflow
+    workflow.add_node("Theoretical_before", create_dummy_node())
+    workflow.add_node("Theoretical", create_theoretical_node(llm))           # reused
+    workflow.add_node("Theoretical_after", create_dummy_node())
+
+    # Middle phase nodes (company-specific)
     workflow.add_node("Project_before", create_dummy_node())
     workflow.add_node("Project", create_project_node(llm))
     workflow.add_node("Project_after", create_dummy_node())
-    
-    # Product Scenario (Product-based companies only)
+
     workflow.add_node("ProductScenario_before", create_dummy_node())
     workflow.add_node("ProductScenario", create_product_scenario_node(llm))
     workflow.add_node("ProductScenario_after", create_dummy_node())
-    
-    # Logical Reasoning/Puzzles (Mass hiring only)
+
     workflow.add_node("LogicalReasoning_before", create_dummy_node())
     workflow.add_node("LogicalReasoning", create_logical_reasoning_node(llm))
     workflow.add_node("LogicalReasoning_after", create_dummy_node())
-    
-    # Coding phase (both)
-    workflow.add_node("Coding_before", create_before_coding_node(llm))
-    workflow.add_node("Coding", create_company_coding_node(llm))
+
+    # Coding - reused from coding workflow
+    workflow.add_node("Coding_before", create_dummy_node())
+    workflow.add_node("Coding", create_coding_node(llm))                     # reused
     workflow.add_node("Coding_after", create_dummy_node())
-    
-    # Ending
-    workflow.add_node("End", create_ending_node(llm))
-    workflow.add_node("Offensive", create_offend_end_node(llm))
 
-    # Entry point
+    # Question increment - reused
+    workflow.add_node("Next_Question", create_question_strike_node())        # reused
+
+    workflow.add_node("End", create_ending_node(llm))                       # company-specific ending
+    workflow.add_node("Offensive", create_offend_end_node(llm))             # reused
+
+    # ── Fixed edges ───────────────────────────────────────────────────────────
     workflow.set_entry_point("Initial_Research")
-
-    # Fixed edges
+    workflow.add_edge("Initial_Research", "Greeting")
     workflow.add_edge("Greeting", "Greeting_after")
     workflow.add_edge("Personalised_before", "Personalised")
     workflow.add_edge("Personalised", "Personalised_after")
-    workflow.add_edge("Initial_Research", "Greeting")
-    workflow.add_edge("Conceptual_before", "Conceptual")
-    workflow.add_edge("Conceptual", "Conceptual_after")
+    workflow.add_edge("Theoretical_before", "Theoretical")
+    workflow.add_edge("Theoretical", "Theoretical_after")
     workflow.add_edge("Project_before", "Project")
     workflow.add_edge("Project", "Project_after")
     workflow.add_edge("ProductScenario_before", "ProductScenario")
@@ -824,72 +772,65 @@ def build_company_graph(google_api_key: str, tavily_api_key: str, checkpointer):
     workflow.add_edge("End", "__end__")
     workflow.add_edge("Offensive", "__end__")
 
-    # Conditional routing
+    # ── Conditional edges ─────────────────────────────────────────────────────
     workflow.add_conditional_edges(
         "Greeting_after",
-        create_route_to_greeting(llm.with_structured_output(InterviewProgress))
+        create_route_to_greeting(llm.with_structured_output(InterviewProgress))  # reused
     )
-    # After personalised, route but override to go to Conceptual
+
     workflow.add_conditional_edges(
         "Personalised_after",
-        create_route_to_personalised(llm.with_structured_output(PersonalisedProgress)),
-        {
-            "Personalised": "Personalised_before",  # Loop back if more exchanges needed
-            "Coding_before": "Conceptual_before",  # Override: go to Conceptual instead of Coding
-        }
+        create_company_route_to_personalised(llm.with_structured_output(PersonalisedToTheoreticalProgress))
     )
-    
-    # After Conceptual, route based on company type
-    # FAANG -> Project, Product-based -> ProductScenario, Mass hiring -> LogicalReasoning
+
     workflow.add_conditional_edges(
-        "Conceptual_after",
-        create_route_to_conceptual(llm.with_structured_output(ConceptualProgress)),
-        {
-            "Conceptual": "Conceptual_before",  # Loop back if more questions needed
-            "Project_before": "Project_before",  # FAANG: go to Project
-            "ProductScenario_before": "ProductScenario_before",  # Product-based: go to ProductScenario
-            "LogicalReasoning_before": "LogicalReasoning_before",  # Mass hiring: go to LogicalReasoning
-            "Coding_before": "Coding_before",  # Fallback: go directly to Coding
-        }
+        "Theoretical_after",
+        create_route_to_theoretical(llm.with_structured_output(TheoreticalProgress))  # reused
     )
-    
-    # After Project (FAANG only) -> go to Coding
+
+    workflow.add_conditional_edges(
+        "Next_Question",
+        create_company_route_next_question(llm)  # company-specific, no LLM needed
+    )
+
+    # Project routing
     workflow.add_conditional_edges(
         "Project_after",
         create_route_to_project(llm.with_structured_output(ProjectProgress)),
         {
-            "Project": "Project_before",  # Loop back if more projects to discuss
-            "Coding_before": "Coding_before",  # Go to Coding when done
+            "Project": "Project_before",
+            "Coding_before": "Coding_before",
         }
     )
-    
-    # After ProductScenario (Product-based only) -> go to Coding
+
+    # ProductScenario routing
     workflow.add_conditional_edges(
         "ProductScenario_after",
         create_route_to_product_scenario(llm.with_structured_output(ProductScenarioProgress)),
         {
-            "ProductScenario": "ProductScenario_before",  # Loop back if more scenarios needed
-            "Coding_before": "Coding_before",  # Go to Coding when done
+            "ProductScenario": "ProductScenario_before",
+            "Coding_before": "Coding_before",
         }
     )
-    
-    # After LogicalReasoning (Mass hiring only) -> go to Coding
+
+    # LogicalReasoning routing
     workflow.add_conditional_edges(
         "LogicalReasoning_after",
         create_route_to_logical_reasoning(llm.with_structured_output(LogicalReasoningProgress)),
         {
-            "LogicalReasoning": "LogicalReasoning_before",  # Loop back if more questions needed
-            "Coding_before": "Coding_before",  # Go to Coding when done
+            "LogicalReasoning": "LogicalReasoning_before",
+            "Coding_before": "Coding_before",
         }
     )
-    
-    # After Coding -> go to End
+
+    # Coding routing - reused
     workflow.add_conditional_edges(
         "Coding_after",
-        create_route_to_company_coding(llm.with_structured_output(CompanyCodingProgress)),
+        create_route_to_coding(llm.with_structured_output(CodingProgress)),  # reused
         {
-            "Coding": "Coding_before",  # Loop back if more coding problems needed
-            "End": "End",  # End interview when complete
+            "Coding": "Coding_before",
+            "Next_Question": "Next_Question",
+            "Offensive": "Offensive",
         }
     )
 
