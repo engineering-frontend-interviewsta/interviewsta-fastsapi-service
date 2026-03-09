@@ -130,11 +130,14 @@ def save_resume_analysis_to_db(
 
 
 def _normalize_interview_type_for_drf(interview_type: str) -> str:
-    """Normalize to what Django/DRF expects (e.g. TechnicalFeedback, get_sesion_history)."""
+    """Normalize to what Django/DRF expects (e.g. TechnicalFeedback, get_session_history).
+    Company and Subject coding interviews are stored as 'Coding Interview' so frontend shows the correct type."""
     if not interview_type:
         return "Technical Interview"
     t = interview_type.strip()
-    if t in ("Technical", "Coding", "Technical Interview", "Coding Interview", "Company", "Subject", "Role-Based", "Role-Based Interview"):
+    if t in ("Company", "Subject"):
+        return "Coding Interview"
+    if t in ("Technical", "Coding", "Technical Interview", "Coding Interview", "Role-Based", "Role-Based Interview"):
         return "Technical Interview"
     if t in ("HR", "HR Interview"):
         return "HR Interview"
@@ -171,8 +174,45 @@ def save_feedback_to_db(
         "duration_seconds": duration_seconds,
         "feedback_data": feedback_data,
         "interaction_log": interaction_log,
-        # "interaction_log_feedback": feedback_data.get("interaction_log_feedback"),
         "soft_skill_summary": soft_skill_summary or {},
         "big5_profile": big5_profile or {},
+    }
+    return _post("/api/internal/feedback-analysis/", payload)
+
+
+def _seconds_to_duration_str(seconds: int) -> str:
+    """Format seconds as HH:MM:SS for SaveFeedbackDto.duration."""
+    if seconds is None or seconds < 0:
+        return "00:00:00"
+    h, r = divmod(int(seconds), 3600)
+    m, s = divmod(r, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def save_feedback_items_to_db(
+    user_email: str,
+    session_id: str,
+    interview_test_id: str,
+    items: Dict[str, Dict[str, int]],
+    strengths: Optional[List[str]] = None,
+    duration_seconds: Optional[int] = None,
+    areas_of_improvements: Optional[List[str]] = None,
+    interaction_logs: Optional[List[Any]] = None,
+    interaction_status_logs: Optional[List[Any]] = None,
+) -> bool:
+    """
+    Save feedback via DRF internal API using SaveFeedbackDto schema.
+    items: FeedbackItemsMap — sleeve -> subkey -> score (e.g. {"problem-solving": {"approach": 85}}).
+    """
+    payload: Dict[str, Any] = {
+        "user_email": user_email,
+        "session_id": session_id,
+        "interviewTestId": str(interview_test_id),
+        "items": items,
+        "strengths": strengths or [],
+        "duration": _seconds_to_duration_str(duration_seconds or 0),
+        "areasOfImprovements": areas_of_improvements or [],
+        "interactionLogs": interaction_logs or [],
+        "interactionStatusLogs": interaction_status_logs or [],
     }
     return _post("/api/internal/feedback-analysis/", payload)
