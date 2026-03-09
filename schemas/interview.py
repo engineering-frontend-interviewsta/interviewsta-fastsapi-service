@@ -2,8 +2,34 @@
 Pydantic schemas for interview operations
 """
 from pydantic import BaseModel, Field
-from typing import Optional, Literal, Dict, Any
+from typing import Optional, Literal, Dict, Any, Tuple
 from datetime import datetime
+
+# Allowed fastapi_interview_type values (from X-Interview-Access-Token payload)
+INTERVIEW_TYPES: Tuple[str, ...] = (
+    "Technical",
+    "HR",
+    "Company",
+    "Subject",
+    "CaseStudy",
+    "Communication",
+    "Role-Based Interview",
+    "Debate",
+)
+
+
+class InterviewAccessTokenPayload(BaseModel):
+    """Decoded payload from X-Interview-Access-Token JWT (same key as Bearer token)."""
+    sub: str  # userId
+    interview_test_id: int = Field(..., alias="interviewTestId")
+    title: str
+    credits: int = 1
+    duration: Optional[int] = None  # e.g. minutes
+    fastapi_interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate"]] = Field(None, alias="fastapiInterviewType")
+    feedback_item_id: Optional[str] = Field(None, alias="feedbackItemId")  # e.g. "fi-coding-i"; used for feedback pipeline and DRF SaveFeedbackDto
+
+    class Config:
+        populate_by_name = True
 
 
 class InterviewStartRequest(BaseModel):

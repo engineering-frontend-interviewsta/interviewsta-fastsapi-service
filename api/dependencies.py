@@ -14,11 +14,16 @@ except ImportError:
     ExpiredSignatureError = type("ExpiredSignatureError", (Exception,), {})
     PyJWTError = Exception
 import logging
+import os
 
 from config import get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+# JWT signing key: must match the secret used to sign tokens (e.g. frontend JWT_SECRET / Nest configService.get('JWT_SECRET')).
+# Set JWT_SIGNING_KEY in env to match; same key is used for Bearer and X-Interview-Access-Token.
+JWT_SIGNING_KEY = os.getenv("JWT_SIGNING_KEY", "django-insecure-kkx4u+$)leey_1p9s8a$b7ayc*0an21$y9ho4#ntouyo7xns=b")
 
 # Security scheme
 security = HTTPBearer()
@@ -56,7 +61,7 @@ def _verify_jwt_token(token: str) -> dict:
     # For djangorestframework-simplejwt defaults:
     decoded = jwt.decode(
         token,
-        'django-insecure-kkx4u+$)leey_1p9s8a$b7ayc*0an21$y9ho4#ntouyo7xns=b',  # Same as Django SECRET_KEY or SIGNING_KEY
+        JWT_SIGNING_KEY,
         algorithms=["HS256"],  # Usually "HS256" or "RS256"
         # Add these if using djangorestframework-simplejwt defaults:
         options={
@@ -101,15 +106,15 @@ async def verify_jwt_token(
         )
 
     # Extract user info from JWT payload
-    # Support both Firebase-style (sub/uid) and DRF-style (user_id) tokens
+    # Expected payload: { sub, email, name, roles } (same secret as JWT_SECRET on frontend)
     uid = decoded_token.get("user_id") or decoded_token.get("uid") or decoded_token.get("sub")
-    print("This is the decoded token:", decoded_token)
-
     user_info = {
-        "user_id": decoded_token.get("user_id"),
+        "user_id": decoded_token.get("user_id") or uid,
         "uid": uid,
         "email": decoded_token.get("email"),
-        "username": decoded_token.get("username"),
+        "username": decoded_token.get("username") or decoded_token.get("name"),
+        "name": decoded_token.get("name"),
+        "roles": decoded_token.get("roles") or [],
     }
     return user_info
 
@@ -143,12 +148,13 @@ async def get_optional_user(authorization: Optional[str] = Header(None)) -> Opti
         token = authorization.replace("Bearer ", "")
         decoded_token = _verify_jwt_token(token)
         uid = decoded_token.get("user_id") or decoded_token.get("uid") or decoded_token.get("sub")
-        print("This is the decoded token:", decoded_token)
         return {
-            "user_id": decoded_token.get("user_id"),
+            "user_id": decoded_token.get("user_id") or uid,
             "uid": uid,
             "email": decoded_token.get("email"),
-            "username": decoded_token.get("username"),
+            "username": decoded_token.get("username") or decoded_token.get("name"),
+            "name": decoded_token.get("name"),
+            "roles": decoded_token.get("roles") or [],
         }
     except Exception:
         return None
@@ -177,10 +183,12 @@ async def verify_token_from_query(token: Optional[str] = None) -> dict:
         decoded_token = _verify_jwt_token(token)
         uid = decoded_token.get("user_id") or decoded_token.get("uid") or decoded_token.get("sub")
         user_info = {
-            "user_id": decoded_token.get("user_id"),
+            "user_id": decoded_token.get("user_id") or uid,
             "uid": uid,
             "email": decoded_token.get("email"),
-            "username": decoded_token.get("username"),
+            "username": decoded_token.get("username") or decoded_token.get("name"),
+            "name": decoded_token.get("name"),
+            "roles": decoded_token.get("roles") or [],
         }
         return user_info
         
@@ -201,4 +209,88 @@ async def verify_token_from_query(token: Optional[str] = None) -> dict:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials",
+        )
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    """Decode JWT with same key as auth; returns payload dict. Raises PyJWTError on failure."""
+    return jwt.decode(
+        token,
+        JWT_SIGNING_KEY,
+        algorithms=["HS256"],
+        options={"verify_signature": True, "verify_exp": True, "verify_aud": False},
+    )
+
+
+async def get_interview_access_payload(
+    x_interview_access_token: Optional[str] = Header(None, alias="X-Interview-Access-Token"),
+) -> "InterviewAccessTokenPayload":
+    """
+    Decode and validate the X-Interview-Access-Token header (JWT, same key as Bearer).
+    Required for interview endpoints; provides interview_test_id, fastapi_interview_type, etc.
+    """
+    from schemas.interview import InterviewAccessTokenPayload
+
+    if not x_interview_access_token or not x_interview_access_token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="X-Interview-Access-Token header is required",
+        )
+    token = x_interview_access_token.strip()
+    try:
+        decoded = await asyncio.to_thread(_decode_jwt_payload, token)
+    except ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Interview access token has expired",
+        )
+    except PyJWTError as e:
+        logger.warning(f"Invalid interview access token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interview access token",
+        )
+    try:
+        return InterviewAccessTokenPayload.model_validate(decoded)
+    except Exception as e:
+        logger.warning(f"Interview access token payload validation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interview access token payload",
+        )
+
+
+async def get_interview_access_payload_from_token(token: str) -> "InterviewAccessTokenPayload":
+    """
+    Decode and validate interview access token from string (e.g. query param for SSE stream).
+    Same contract as get_interview_access_payload; use when header is not available (EventSource).
+    """
+    from schemas.interview import InterviewAccessTokenPayload
+
+    if not token or not token.strip():
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Interview access token is required",
+        )
+    token = token.strip()
+    try:
+        decoded = await asyncio.to_thread(_decode_jwt_payload, token)
+    except ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Interview access token has expired",
+        )
+    except PyJWTError as e:
+        logger.warning(f"Invalid interview access token: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interview access token",
+        )
+    try:
+        return InterviewAccessTokenPayload.model_validate(decoded)
+    except Exception as e:
+        logger.warning(f"Interview access token payload validation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid interview access token payload",
         )

@@ -4,7 +4,7 @@ Interview API endpoints
 All blocking I/O (Redis, Celery AsyncResult) is run off the event loop via run_sync()
 to keep the event loop free and avoid 502s / health-check timeouts under load.
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.responses import StreamingResponse
 from typing import Any, Dict, Optional
 import logging
@@ -29,7 +29,14 @@ from schemas.interview import (
     VideoTelemetryData,
     # VideoTelemetryPayload
 )
-from api.dependencies import get_current_user, get_redis, verify_token_from_query
+from api.dependencies import (
+    get_current_user,
+    get_redis,
+    verify_token_from_query,
+    get_interview_access_payload,
+    get_interview_access_payload_from_token,
+)
+from schemas.interview import InterviewAccessTokenPayload
 from services.interview_session import InterviewSessionManager
 from celery.result import AsyncResult
 from tasks.interview_tasks import process_interview_start
@@ -325,7 +332,8 @@ def _get_respond_status_data_sync(
 async def start_interview(
     request: InterviewStartRequest,
     user_info: Dict = Depends(get_current_user),
-    redis_client: Redis = Depends(get_redis)
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
+    redis_client: Redis = Depends(get_redis),
 ):
     """
     Start a new interview session
@@ -338,15 +346,19 @@ async def start_interview(
     """
     try:
         logger.info(f"Starting {request.interview_type} interview for user {user_info['email']}")
-        
-        # Use JWT email for session ownership (email-based auth)
+        # Merge feedback_item_id and interview_test_id from X-Interview-Access-Token into payload for feedback pipeline
+        payload = dict(request.payload or {})
+        if getattr(interview_access, "feedback_item_id", None):
+            payload["feedback_item_id"] = interview_access.feedback_item_id
+        if getattr(interview_access, "interview_test_id", None) is not None:
+            payload["interview_test_id"] = interview_access.interview_test_id
         # Queue Celery task (non-blocking)
         task = process_interview_start.apply_async(
             args=[
                 request.session_id,
                 request.interview_type,
                 user_info["email"],
-                request.payload
+                payload,
             ],
             queue="interview"
         )
@@ -373,6 +385,7 @@ async def start_interview(
 async def get_start_interview_status(
     task_id: str,
     user_info: Dict = Depends(get_current_user),
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
     redis_client: Redis = Depends(get_redis),
 ):
     """
@@ -409,7 +422,8 @@ async def submit_response(
     session_id: str,
     request: UserResponseRequest,
     user_info: Dict = Depends(get_current_user),
-    redis_client: Redis = Depends(get_redis)
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
+    redis_client: Redis = Depends(get_redis),
 ):
     """
     Submit user response to interview question.
@@ -506,6 +520,7 @@ async def get_respond_task_status(
     session_id: str,
     task_id: str,
     user_info: Dict = Depends(get_current_user),
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
     redis_client: Redis = Depends(get_redis),
 ):
     """
@@ -562,7 +577,8 @@ async def submit_video_quality(
     session_id: str,
     data: VideoQualityData,
     user_info: Dict = Depends(get_current_user),
-    redis_client: Redis = Depends(get_redis)
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
+    redis_client: Redis = Depends(get_redis),
 ):
     """
     Submit video quality and behavioral metrics
@@ -674,6 +690,7 @@ async def set_video_telemetry(
     session_id: str,
     payload: VideoTelemetryData,
     user_info: Dict = Depends(get_current_user),
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
     redis_client: Redis = Depends(get_redis),
 ):
     """
@@ -742,6 +759,7 @@ async def set_video_telemetry(
 async def get_video_telemetry(
     session_id: str,
     user_info: Dict = Depends(get_current_user),
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
     redis_client: Redis = Depends(get_redis),
 ):
     """Get stored video telemetry (running average) for the session. Same shape as set payload."""
@@ -775,24 +793,35 @@ async def get_video_telemetry(
 @router.get("/{session_id}/stream")
 async def stream_interview_status(
     session_id: str,
-    token: str,  # Token as query parameter (EventSource doesn't support headers)
-    redis_client: Redis = Depends(get_redis)
+    token: str,  # Bearer token as query parameter (EventSource doesn't support headers)
+    interview_access_token: str = Query(..., description="Same JWT as X-Interview-Access-Token (required for SSE)"),
+    redis_client: Redis = Depends(get_redis),
 ):
     """
     Server-Sent Events stream for real-time interview updates
-    
-    Note: Token must be passed as query parameter (?token=...) because
-    EventSource doesn't support custom headers
-    
+
+    Note: Token and interview_access_token must be passed as query parameters because
+    EventSource doesn't support custom headers.
+
     Events:
     - transcription: User's transcribed speech
     - ai_response: AI's response with audio
     - status: Status changes
     - complete: Interview completed
     """
-    # Verify token from query parameter
+    # Verify Bearer token from query parameter
     try:
         user_info = await verify_token_from_query(token)
+    except HTTPException as e:
+        async def error_generator():
+            yield f"event: error\ndata: {json.dumps({'error': e.detail})}\n\n"
+        return StreamingResponse(
+            error_generator(),
+            media_type="text/event-stream"
+        )
+    # Verify interview access token (same JWT as X-Interview-Access-Token header)
+    try:
+        await get_interview_access_payload_from_token(interview_access_token)
     except HTTPException as e:
         async def error_generator():
             yield f"event: error\ndata: {json.dumps({'error': e.detail})}\n\n"
@@ -920,7 +949,8 @@ async def stream_interview_status(
 async def end_interview(
     request: Dict[str, Any],
     user_info: Dict = Depends(get_current_user),
-    redis_client: Redis = Depends(get_redis)
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
+    redis_client: Redis = Depends(get_redis),
 ):
     """
     End an interview session and trigger feedback generation
@@ -964,7 +994,8 @@ async def end_interview(
         session_manager.set_status(session_id, "completed")
         
         # Build session metadata: only set interview_test_id if request sent a valid value,
-        # otherwise keep the value stored at start (so Company/Subject don't get overwritten with null)
+        # otherwise keep the value stored at start (so Company/Subject don't get overwritten with null).
+        # Persist feedback_item_id from X-Interview-Access-Token for feedback pipeline (feedback_items.json).
         updates = {
             "duration": int(duration) if isinstance(duration, (int, str)) else 0,
             "interview_type": interview_type,
@@ -972,11 +1003,13 @@ async def end_interview(
             "ended_at": datetime.utcnow().isoformat()
         }
         try:
-            tid = int(interview_test_id) if interview_test_id is not None else None
+            tid = int(interview_test_id) if interview_test_id is not None else getattr(interview_access, "interview_test_id", None)
             if tid is not None:
                 updates["interview_test_id"] = tid
         except (TypeError, ValueError):
             pass
+        if getattr(interview_access, "feedback_item_id", None):
+            updates["feedback_item_id"] = interview_access.feedback_item_id
         session_manager.update_session(session_id, updates)
         
         # If session is finished and has conversation history, trigger feedback generation
@@ -1110,7 +1143,8 @@ def _get_feedback_status_data_sync(task_id: str, redis_client: Redis) -> Dict[st
 async def get_interview_feedback_status(
     task_id: str,
     user_info: Dict = Depends(get_current_user),
-    redis_client: Redis = Depends(get_redis)
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
+    redis_client: Redis = Depends(get_redis),
 ):
     """
     Get status of feedback generation task (queued after end_meeting).
@@ -1132,7 +1166,8 @@ async def get_interview_feedback_status(
 async def delete_session(
     session_id: str,
     user_info: Dict = Depends(get_current_user),
-    redis_client: Redis = Depends(get_redis)
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
+    redis_client: Redis = Depends(get_redis),
 ):
     """Delete an interview session"""
     try:
