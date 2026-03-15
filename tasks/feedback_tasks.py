@@ -413,16 +413,25 @@ def generate_case_study_feedback(self, session_id: str, history: str, user_email
     """
     try:
         logger.info(f"Generating case study feedback for session {session_id}")
-        # logger.info(f"[INITIAL DEBUG:generate_case_study_feedback] interaction_log: \n{interaction_log}")
-        
+
         # Get API key
         google_key = os.getenv("GOOGLE_API_KEY", "")
-        
-        # Build feedback graph
-        graph = build_case_study_feedback_graph(google_key)
-        
-        # Run feedback generation
-        result = graph.invoke({"history_log": history})
+
+        # Retrieve topic_slug from session payload (set by frontend topic selection)
+        session_manager_pre = InterviewSessionManager(
+            Redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        )
+        session_pre = session_manager_pre.get_session(session_id)
+        topic_slug = ""
+        if session_pre:
+            payload_pre = session_pre.get("payload") or {}
+            topic_slug = payload_pre.get("topic_slug", "") or ""
+
+        # Build feedback graph (topic-aware)
+        graph = build_case_study_feedback_graph(google_key, topic_slug=topic_slug)
+
+        # Run feedback generation — pass topic_slug in state so nodes can use it
+        result = graph.invoke({"history_log": history, "topic_slug": topic_slug})
 
         history, messages = get_interaction_history_from_redis(session_id)
         interaction_log = extract_qa_pairs(messages)[1:]
@@ -436,6 +445,8 @@ def generate_case_study_feedback(self, session_id: str, history: str, user_email
             "creativity_score": result["business_impact"].creativity,
             "decision_making_score": result["business_impact"].decision_making,
             "impact_orientation_score": result["business_impact"].impact_orientation,
+            "framework_adherence": getattr(result["analytical"], "framework_adherence", None),
+            "topic_slug": topic_slug,
             "strengths": [
                 result["strengths_and_areas_of_improvements"].strength1,
                 result["strengths_and_areas_of_improvements"].strength2,
@@ -506,7 +517,8 @@ def generate_case_study_feedback(self, session_id: str, history: str, user_email
                 feedback_data=feedback,
                 interaction_log=interaction_log,
                 soft_skill_summary=soft_skill_summary,
-                big5_profile=big5_profile
+                big5_profile=big5_profile,
+                extra_fields={"topic_slug": topic_slug},
             )
             
             if db_saved:

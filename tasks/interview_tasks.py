@@ -131,7 +131,9 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             current_query="",
             current_case_question="",
             current_case_reference="",
-            case_completed=False
+            case_completed=False,
+            topic_slug=payload.get("topic_slug", ""),
+            topic_frameworks=[],
         )
     elif interview_type == "Communication":  # ADD THIS BLOCK
         return CommunicationInterviewState(

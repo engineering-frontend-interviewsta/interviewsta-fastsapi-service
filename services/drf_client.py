@@ -144,10 +144,12 @@ def save_feedback_to_db(
     interaction_log: List[Any],
     soft_skill_summary: Optional[Dict[str, Any]] = None,
     big5_profile: Optional[Dict[str, Any]] = None,
+    extra_fields: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Save interview feedback via DRF internal API.
-    Same contract as former django_db.save_feedback_to_db.
+    extra_fields: optional dict of additional top-level fields to merge into the payload
+    (e.g. {"topic_slug": "profitability"} for Case Study interviews).
     """
     interview_type_normalized = _normalize_interview_type_for_drf(interview_type)
     payload = {
@@ -158,8 +160,9 @@ def save_feedback_to_db(
         "duration_seconds": duration_seconds,
         "feedback_data": feedback_data,
         "interaction_log": interaction_log,
-        # "interaction_log_feedback": feedback_data.get("interaction_log_feedback"),
         "soft_skill_summary": soft_skill_summary or {},
         "big5_profile": big5_profile or {},
     }
+    if extra_fields:
+        payload.update(extra_fields)
     return _post("/api/internal/feedback-analysis/", payload)
