@@ -21,7 +21,7 @@ INTERVIEW_TYPES: Tuple[str, ...] = (
 class InterviewAccessTokenPayload(BaseModel):
     """Decoded payload from X-Interview-Access-Token JWT (same key as Bearer token)."""
     sub: str  # userId
-    interview_test_id: int = Field(..., alias="interviewTestId")
+    interview_test_id: str = Field(..., alias="interviewTestId")
     title: str
     credits: int = 1
     duration: Optional[int] = None  # e.g. minutes
@@ -33,18 +33,21 @@ class InterviewAccessTokenPayload(BaseModel):
 
 
 class InterviewStartRequest(BaseModel):
-    """Request to start an interview session"""
-    interview_type: Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate"]
+    """
+    Request to start an interview session.
+    interview_type and user_id are derived from the two JWTs (Bearer + X-Interview-Access-Token)
+    and must not be sent in the body; only session_id and payload are required.
+    """
     session_id: str
-    user_id: str
     payload: Dict[str, Any] = Field(default_factory=dict)
-    
+    # Optional overrides only if backend allows; prefer decoding from tokens
+    interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate"]] = None
+    user_id: Optional[str] = None
+
     class Config:
         json_schema_extra = {
             "example": {
-                "interview_type": "Technical",
                 "session_id": "uuid-123",
-                "user_id": "firebase_uid",
                 "payload": {
                     "resume": "Experienced developer...",
                     "TechnicalResearch": "..."

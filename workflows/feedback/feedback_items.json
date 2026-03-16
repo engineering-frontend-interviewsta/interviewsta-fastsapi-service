@@ -1,6 +1,6 @@
 [
     {
-      "id": "fi-coding-i",
+      "id": "f45201b4-c099-4221-a6e8-be9f0304e8d3",
       "title": "Coding - I",
       "description": "Standard coding interview evaluation covering problem solving, technical logic, code quality, and communication. Used for all subject-wise and general coding interviews.",
       "items": {
@@ -19,7 +19,7 @@
       }
     },
     {
-      "id": "fi-faang",
+      "id": "423b67d5-493f-4020-a027-bbefbde253c3",
       "title": "FAANG",
       "description": "High-bar technical evaluation for FAANG-tier company interviews covering algorithmic depth, system thinking, code design, and collaborative communication.",
       "items": {
@@ -51,7 +51,7 @@
       }
     },
     {
-      "id": "fi-product-based",
+      "id": "5bcff863-406b-4f23-938d-04ed0d6f7dd",
       "title": "Product Based",
       "description": "Evaluation for product-based company interviews balancing technical problem solving, practical coding ability, product thinking, and ownership communication.",
       "items": {
@@ -82,7 +82,7 @@
       }
     },
     {
-      "id": "fi-mass-hiring",
+      "id": "b22c0e6f-f9a6-440b-929a-6b49dff14a69",
       "title": "Mass Hiring",
       "description": "Evaluation for mass-hiring and service-based company interviews focusing on basic problem solving, programming fundamentals, logical reasoning, and professional communication.",
       "items": {
@@ -113,7 +113,7 @@
       }
     },
     {
-      "id": "fi-communication",
+      "id": "420a5484-b317-48e8-afa8-5ad001714809",
       "title": "Communication",
       "description": "Evaluation schema for behavioral and HR interviews assessing verbal communication, written expression, vocabulary accuracy, and conversational professionalism.",
       "items": {
@@ -144,7 +144,7 @@
       }
     },
     {
-      "id": "fi-debate",
+      "id": "f1b2abe6-06c5-4238-92f4-00bd3375d62",
       "title": "Debate",
       "description": "Evaluation schema for debate interviews assessing argument construction, rebuttal quality, persuasion through evidence, and debate presence.",
       "items": {
@@ -175,7 +175,7 @@
       }
     },
     {
-      "id": "fi-role-based",
+      "id": "79b985a8-4dd6-48b0-bc6b-2e32967366ef",
       "title": "Role Based",
       "description": "Evaluation schema for role-specific interviews covering professional communication, technical domain knowledge, problem solving implementation, and practical project experience.",
       "items": {

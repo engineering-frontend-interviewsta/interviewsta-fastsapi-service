@@ -19,6 +19,8 @@ All interview endpoints require **two** tokens:
 
 **Exception:** The SSE stream endpoint (`GET /{session_id}/stream`) cannot send custom headers (EventSource). Use **query parameters** instead: `token` (Bearer token) and `interview_access_token` (same value as `X-Interview-Access-Token`).
 
+**Start interview:** The request body must **not** include `interview_type` or `user_id`. Both are derived from the two headers (see §3.1).
+
 ### X-Interview-Access-Token payload (encode this as JWT)
 
 ```ts
@@ -69,13 +71,16 @@ Valid `feedbackItemId` values (from backend `feedback_items.json`):
 - `X-Interview-Access-Token: <interview_contract_jwt>`
 - `Content-Type: application/json`
 
-**Request body**
+**Request body (only `session_id` and `payload`; do not send `interview_type` or `user_id`)**
+
+`interview_type` and `user_id` are **decoded from the two headers** and must not be sent in the body (they are encoded/encrypted in the JWTs):
+
+- **interview_type** is taken from **X-Interview-Access-Token** → `fastapiInterviewType`. It must be set in that token; if missing, the API returns 400.
+- **user_id** is taken from **Authorization** (Bearer) → `sub` (or `uid`, then `email` as fallback). Session ownership uses this value.
 
 ```json
 {
   "session_id": "uuid-v4-string",
-  "interview_type": "Company",
-  "user_id": "firebase_uid_or_user_id",
   "payload": {
     "resume": "...",
     "interview_test_id": 68,
@@ -86,8 +91,8 @@ Valid `feedbackItemId` values (from backend `feedback_items.json`):
 }
 ```
 
-- `interview_type`: One of `Technical`, `HR`, `Company`, `Subject`, `CaseStudy`, `Communication`, `Role-Based Interview`, `Debate`.
-- `payload`: Type-specific (e.g. Company/Subject: `company`, `subject`, `Tags`, `Questions`, `interview_test_id`; Coding: `resume`, `TechnicalResearch`, `CodingResearch`).
+- **session_id** (required): Unique session id (e.g. UUID v4).
+- **payload** (optional): Type-specific data (e.g. Company/Subject: `company`, `subject`, `Tags`, `Questions`, `interview_test_id`; Coding: `resume`, `TechnicalResearch`, `CodingResearch`). `interview_test_id` and `feedback_item_id` can also be merged from the interview token by the backend if present in the token.
 
 **Response** `200`
 

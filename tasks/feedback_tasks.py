@@ -10,11 +10,11 @@ import json
 from redis import Redis
 from datetime import datetime
 
-from workflows.feedback.technical_feedback import build_tech_skills_feedback_graph, TechIntState
-from workflows.feedback.hr_feedback import build_hr_skills_feedback_graph, HRIntState
-from workflows.feedback.case_study_feedback import build_case_study_feedback_graph, CaseStudyIntState
-from workflows.feedback.communication_feedback import build_communication_feedback_graph
-from workflows.feedback.debate_feedback import build_debate_feedback_graph
+from workflows.feedback.legacy.technical_feedback import build_tech_skills_feedback_graph, TechIntState
+from workflows.feedback.legacy.hr_feedback import build_hr_skills_feedback_graph, HRIntState
+from workflows.feedback.legacy.case_study_feedback import build_case_study_feedback_graph, CaseStudyIntState
+from workflows.feedback.legacy.communication_feedback import build_communication_feedback_graph
+from workflows.feedback.legacy.debate_feedback import build_debate_feedback_graph
 from services.interview_session import InterviewSessionManager
 from langgraph.checkpoint.redis import RedisSaver
 
@@ -98,7 +98,108 @@ def extract_qa_pairs(messages):
 
         return qa_pairs
 
-# def get_candidate
+
+def _run_unified_feedback_pipeline(
+    session_id: str,
+    history: str,
+    user_email: str,
+    session: Dict[str, Any],
+    redis_client: Redis,
+    feedback_item_id: str,
+    google_key: str,
+) -> Dict[str, Any]:
+    """Run the unified feedback pipeline (feedback_items.json + service.py) and save to DB + Redis."""
+    from workflows.feedback.service import run_feedback_pipeline, get_feedback_item
+    from services.drf_client import save_feedback_items_to_db
+
+    if not get_feedback_item(feedback_item_id):
+        raise ValueError(f"Unknown feedback_item_id: {feedback_item_id}")
+    pipeline_result = run_feedback_pipeline(feedback_item_id, history, google_key)
+    strengths_obj = pipeline_result.get("strengths_and_improvements") or {}
+    strengths_list = [
+        strengths_obj.get("strength1", ""),
+        strengths_obj.get("strength2", ""),
+        strengths_obj.get("strength3", ""),
+    ]
+    improvements_list = [
+        strengths_obj.get("improvement1", ""),
+        strengths_obj.get("improvement2", ""),
+        strengths_obj.get("improvement3", ""),
+    ]
+    interaction_feedback = pipeline_result.get("interaction_feedback") or []
+    interaction_status_logs = [{"status": x.get("status"), "comment": x.get("comment")} for x in interaction_feedback]
+    history_ckpt, messages = get_interaction_history_from_redis(session_id)
+    interaction_logs = extract_qa_pairs(messages)[1:] if messages else []
+
+    interview_test_id = (session or {}).get("interview_test_id")
+    if interview_test_id is None and session:
+        payload = session.get("payload") or {}
+        interview_test_id = payload.get("interview_type_id") or payload.get("interview_test_id")
+    interview_test_id_str = str(interview_test_id) if interview_test_id is not None else ""
+    duration_seconds = session.get("duration", 0) if session else 0
+    items = pipeline_result.get("sleeve_scores") or {}
+
+    save_feedback_items_to_db(
+        user_email=user_email,
+        session_id=session_id,
+        interview_test_id=interview_test_id_str,
+        items=items,
+        strengths=strengths_list,
+        duration_seconds=int(duration_seconds) if duration_seconds else 0,
+        areas_of_improvements=improvements_list,
+        interaction_logs=interaction_logs,
+        interaction_status_logs=interaction_status_logs,
+        user_id=(session or {}).get("user_id"),
+    )
+    feedback = {
+        "items": items,
+        "strengths": strengths_list,
+        "areas_of_improvements": improvements_list,
+        "interaction_feedback": interaction_feedback,
+        "interaction_status_logs": interaction_status_logs,
+        "interview_type_id": feedback_item_id,
+        "interview_title": pipeline_result.get("interview_title", ""),
+    }
+    redis_key = f"feedback:{session_id}"
+    redis_client.setex(redis_key, 3600, json.dumps(feedback))
+    return {"status": "completed", "feedback": feedback}
+
+
+@celery_app.task(bind=True, base=FeedbackTask, name="tasks.feedback_tasks.generate_feedback")
+def generate_feedback(self, session_id: str, history: str, user_email: str) -> Dict[str, Any]:
+    """
+    Single entry point for feedback generation. Requires feedback_item_id from session
+    (from X-Interview-Access-Token). Uses unified pipeline only: feedback_items.json,
+    service.py, graph.py, prompts.py, schemas.py. No legacy per-type feedback.
+    """
+    logger.info(f"Generating feedback for session {session_id}")
+    try:
+        google_key = os.getenv("GOOGLE_API_KEY", "")
+        if not google_key:
+            return {"status": "error", "error": "GOOGLE_API_KEY not set", "feedback": None}
+        session_manager = InterviewSessionManager(self.redis_client)
+        session = session_manager.get_session(session_id)
+        feedback_item_id = (session or {}).get("feedback_item_id") or ((session or {}).get("payload") or {}).get("feedback_item_id")
+
+        if not feedback_item_id:
+            return {"status": "error", "error": "feedback_item_id missing (required from X-Interview-Access-Token)", "feedback": None}
+        from workflows.feedback.service import get_feedback_item
+        if not get_feedback_item(feedback_item_id):
+            return {"status": "error", "error": f"Unknown feedback_item_id: {feedback_item_id}", "feedback": None}
+
+        return _run_unified_feedback_pipeline(
+            session_id=session_id,
+            history=history,
+            user_email=user_email,
+            session=session or {},
+            redis_client=self.redis_client,
+            feedback_item_id=feedback_item_id,
+            google_key=google_key,
+        )
+    except Exception as e:
+        logger.error(f"Error generating feedback for session {session_id}: {e}", exc_info=True)
+        return {"status": "error", "error": str(e), "feedback": None}
+
 
 @celery_app.task(bind=True, base=FeedbackTask, name="tasks.feedback_tasks.generate_technical_feedback")
 def generate_technical_feedback(self, session_id: str, history: str, user_email: str) -> Dict[str, Any]:
@@ -121,69 +222,8 @@ def generate_technical_feedback(self, session_id: str, history: str, user_email:
         google_key = os.getenv("GOOGLE_API_KEY", "")
         session_manager = InterviewSessionManager(self.redis_client)
         session = session_manager.get_session(session_id)
-        feedback_item_id = (session or {}).get("feedback_item_id") or ((session or {}).get("payload") or {}).get("feedback_item_id")
 
-        # New path: feedback_item_id present and valid -> use feedback_items.json pipeline + SaveFeedbackDto
-        if feedback_item_id and google_key:
-            try:
-                from workflows.feedback.service import run_feedback_pipeline, get_feedback_item
-                from services.drf_client import save_feedback_items_to_db
-                if get_feedback_item(feedback_item_id):
-                    pipeline_result = run_feedback_pipeline(feedback_item_id, history, google_key)
-                    strengths_obj = pipeline_result.get("strengths_and_improvements") or {}
-                    strengths_list = [
-                        strengths_obj.get("strength1", ""),
-                        strengths_obj.get("strength2", ""),
-                        strengths_obj.get("strength3", ""),
-                    ]
-                    improvements_list = [
-                        strengths_obj.get("improvement1", ""),
-                        strengths_obj.get("improvement2", ""),
-                        strengths_obj.get("improvement3", ""),
-                    ]
-                    interaction_feedback = pipeline_result.get("interaction_feedback") or []
-                    interaction_status_logs = [{"status": x.get("status"), "comment": x.get("comment")} for x in interaction_feedback]
-                    history_ckpt, messages = get_interaction_history_from_redis(session_id)
-                    interaction_logs = extract_qa_pairs(messages)[1:] if messages else []
-
-                    interview_test_id = (session or {}).get("interview_test_id")
-                    if interview_test_id is None and session:
-                        payload = session.get("payload") or {}
-                        interview_test_id = payload.get("interview_type_id") or payload.get("interview_test_id")
-                    interview_test_id_str = str(interview_test_id) if interview_test_id is not None else ""
-                    duration_seconds = session.get("duration", 0) if session else 0
-
-                    items = pipeline_result.get("sleeve_scores") or {}
-
-                    db_saved = save_feedback_items_to_db(
-                        user_email=user_email,
-                        session_id=session_id,
-                        interview_test_id=interview_test_id_str,
-                        items=items,
-                        strengths=strengths_list,
-                        duration_seconds=int(duration_seconds) if duration_seconds else 0,
-                        areas_of_improvements=improvements_list,
-                        interaction_logs=interaction_logs,
-                        interaction_status_logs=interaction_status_logs,
-                    )
-                    logger.info(f"Feedback (SaveFeedbackDto) saved for session {session_id}: {db_saved}")
-
-                    feedback = {
-                        "items": items,
-                        "strengths": strengths_list,
-                        "areas_of_improvements": improvements_list,
-                        "interaction_feedback": interaction_feedback,
-                        "interaction_status_logs": interaction_status_logs,
-                        "interview_type_id": feedback_item_id,
-                        "interview_title": pipeline_result.get("interview_title", ""),
-                    }
-                    redis_key = f"feedback:{session_id}"
-                    self.redis_client.setex(redis_key, 3600, json.dumps(feedback))
-                    return {"status": "completed", "feedback": feedback}
-            except Exception as e:
-                logger.warning(f"Feedback-item pipeline failed for {feedback_item_id}, falling back to legacy: {e}", exc_info=True)
-
-        # Legacy path: build tech skills graph
+        # Legacy path only (unified path is in generate_feedback)
         graph = build_tech_skills_feedback_graph(google_key)
         result = graph.invoke({"history_log": history})
         logger.info(f"Technical feedback result: {result}")

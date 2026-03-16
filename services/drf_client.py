@@ -2,17 +2,21 @@
 Client for persisting resume analysis and interview feedback via DRF internal API.
 Replaces direct Django ORM usage (django_db.py).
 """
+import json
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 import requests
+
+YELLOW = "\033[33m"
+RESET = "\033[0m"
 
 logger = logging.getLogger(__name__)
 
 # Base URL and auth - read at call time so env is available in Celery workers
 def _drf_base_url() -> str:
-    return os.getenv("DRF_BASE_URL", "http://localhost:8000").rstrip("/")
+    return os.getenv("DRF_BASE_URL", "http://localhost:3003").rstrip("/")
 
 def _drf_headers() -> Dict[str, str]:
     headers = {"Content-Type": "application/json"}
@@ -48,31 +52,24 @@ def _get(path: str, params: Optional[Dict[str, Any]] = None, timeout: int = 30) 
         return None
 
 
-def get_research_questions_for_subject(interview_test_id: Optional[int] = None) -> Optional[Any]:
+def get_research_questions_for_subject(interview_test_id: Optional[Union[int, str]] = None) -> Optional[Any]:
     """
     Fetch relevant research questions for a Subject interview from DRF.
     Calls InternalQuestionResearchView: GET internal/question-research/?interview_type_id=...
-    DRF returns { "interview_type_id", "topic", "research" }; we use "research" as QuestionResearch.
-
-    Args:
-        interview_test_id: InterviewTest id (same as interview_type_id in Django).
+    interview_test_id can be an integer or a UUID string (DRF may accept either).
 
     Returns:
         Response payload from DRF with keys interview_type_id, topic, research; or None on failure.
     """
     if interview_test_id is None:
         return None
-    return _get("/api/internal/question-research/", params={"interview_type_id": interview_test_id})
+    return _get("/internal/question/", params={"interview_type_id": interview_test_id})
 
 
-def get_company_for_interview(interview_type_id: Optional[int] = None) -> Optional[Any]:
+def get_company_for_interview(interview_type_id: Optional[Union[int, str]] = None) -> Optional[Any]:
     """
     Fetch company name for a Company interview from DRF.
-    Calls InternalInterviewCompanyView: GET internal/interview-company/?interview_type_id=...
-    DRF returns { "interview_type_id", "company" }; we use "company" in initial state.
-
-    Args:
-        interview_type_id: InterviewTest id from the client.
+    interview_type_id can be an integer or a UUID string.
 
     Returns:
         Response payload from DRF with keys interview_type_id, company; or None on failure.
@@ -82,17 +79,17 @@ def get_company_for_interview(interview_type_id: Optional[int] = None) -> Option
     return _get("/api/internal/interview-company/", params={"interview_type_id": interview_type_id})
 
 
-def get_interview_questions(interview_type_id: Optional[int] = None) -> Optional[Any]:
+def get_interview_questions(interview_type_id: Optional[Union[int, str]] = None) -> Optional[Any]:
     """
     Fetch 5 interview questions (3 theoretical + 2 coding) for Company/Subject interviews from DRF.
-    GET internal/interview-questions/?interview_type_id=...
+    interview_type_id can be an integer or a UUID string.
 
     Returns:
         Response with interview_type_id, company, subjects, theoretical_questions, coding_questions; or None on failure.
     """
     if interview_type_id is None:
         return None
-    return _get("/api/internal/interview-questions/", params={"interview_type_id": interview_type_id})
+    return _get("/internal/interview-questions/", params={"interview_type_id": interview_type_id})
 
 
 def save_resume_analysis_to_db(
@@ -177,7 +174,7 @@ def save_feedback_to_db(
         "soft_skill_summary": soft_skill_summary or {},
         "big5_profile": big5_profile or {},
     }
-    return _post("/api/internal/feedback-analysis/", payload)
+    return _post("/interview-feedback/", payload)
 
 
 def _seconds_to_duration_str(seconds: int) -> str:
@@ -199,14 +196,15 @@ def save_feedback_items_to_db(
     areas_of_improvements: Optional[List[str]] = None,
     interaction_logs: Optional[List[Any]] = None,
     interaction_status_logs: Optional[List[Any]] = None,
+    user_id: Optional[str] = None,
 ) -> bool:
     """
-    Save feedback via DRF internal API using SaveFeedbackDto schema.
-    items: FeedbackItemsMap — sleeve -> subkey -> score (e.g. {"problem-solving": {"approach": 85}}).
+    Save feedback via NestJS internal API using SaveFeedbackDto schema only.
+    Payload must contain DTO fields: interviewTestId, items, strengths, duration,
+    areasOfImprovements, interactionLogs, interactionStatusLogs.
+    user_email/session_id/user_id may optionally be forwarded if the Nest endpoint accepts them.
     """
     payload: Dict[str, Any] = {
-        "user_email": user_email,
-        "session_id": session_id,
         "interviewTestId": str(interview_test_id),
         "items": items,
         "strengths": strengths or [],
@@ -214,5 +212,27 @@ def save_feedback_items_to_db(
         "areasOfImprovements": areas_of_improvements or [],
         "interactionLogs": interaction_logs or [],
         "interactionStatusLogs": interaction_status_logs or [],
+        "sessionId": session_id,
     }
-    return _post("/api/internal/feedback-analysis/", payload)
+    # Optionally include identity fields if the NestJS DTO supports them
+    if user_email:
+        payload["userEmail"] = user_email
+    if session_id:
+        payload["sessionId"] = session_id
+    if user_id:
+        payload["userId"] = user_id
+    path = "/interview-feedback/"
+    full_url = f"{_drf_base_url()}{path}"
+    logger.warning(
+        "%s[SAVE_FEEDBACK] endpoint: %s%s",
+        YELLOW,
+        full_url,
+        RESET,
+    )
+    logger.warning(
+        "%s[SAVE_FEEDBACK] payload: %s%s",
+        YELLOW,
+        json.dumps(payload, indent=2, default=str),
+        RESET,
+    )
+    return _post(path, payload)
