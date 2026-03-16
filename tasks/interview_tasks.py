@@ -84,6 +84,23 @@ class InterviewTask(Task):
 # HELPER FUNCTIONS (Module-level, not class methods)
 # ============================================================================
 
+def _normalize_interview_test_id(value: Any) -> Optional[Any]:
+    """
+    Return interview_test_id as int only when it is numeric; otherwise keep as str (e.g. UUID).
+    Prevents ValueError when the client sends a UUID string and we were previously calling int() on it.
+    """
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    s = str(value).strip()
+    if not s:
+        return None
+    if s.isdigit():
+        return int(s)
+    return value  # UUID or other non-numeric id: pass through as-is
+
+
 def _map_interview_questions_from_drf(data: Dict[str, Any]) -> list:
     """
     Map DRF interview-questions response to list of question dicts for workflow state.
@@ -378,15 +395,13 @@ def process_interview_start(
         logger.info(f"Creating session {session_id} in Redis for user {user_id}")
         self.session_manager.create_session(session_id, interview_type, user_id, payload)
         
-        # Store interview_test_id at top level so feedback task always has it (Company/Subject/Technical/etc.)
+        # Store interview_test_id at top level (int or str/UUID) so feedback task always has it
         interview_test_id_from_payload = payload.get("interview_test_id") or payload.get("interview_type_id")
         if interview_test_id_from_payload is not None:
-            try:
-                tid = int(interview_test_id_from_payload)
+            tid = _normalize_interview_test_id(interview_test_id_from_payload)
+            if tid is not None:
                 self.session_manager.update_session(session_id, {"interview_test_id": tid})
                 logger.info(f"Session {session_id}: stored interview_test_id={tid} from payload")
-            except (TypeError, ValueError):
-                pass
         
         # Set processing flag (expires in 60s as safety)
         self.redis_client.setex(processing_key, 60, "true")
@@ -400,7 +415,8 @@ def process_interview_start(
             if interview_test_id is not None:
                 try:
                     from services.drf_client import get_research_questions_for_subject
-                    research = get_research_questions_for_subject(interview_test_id=int(interview_test_id))
+                    tid = _normalize_interview_test_id(interview_test_id)
+                    research = get_research_questions_for_subject(interview_test_id=tid) if tid is not None else None
                     if research is not None:
                         qr = None
                         if isinstance(research, str):
@@ -448,7 +464,8 @@ def process_interview_start(
             if interview_test_id is not None:
                 try:
                     from services.drf_client import get_company_for_interview
-                    result = get_company_for_interview(interview_type_id=int(interview_test_id))
+                    tid = _normalize_interview_test_id(interview_test_id)
+                    result = get_company_for_interview(interview_type_id=tid) if tid is not None else None
                     logger.info(f"Company interview: result={result} type={type(result)}")
                     if result is not None and isinstance(result, dict) and result.get("company"):
                         drf_company = (result["company"] or "").strip()
@@ -466,7 +483,8 @@ def process_interview_start(
             if interview_test_id is not None:
                 try:
                     from services.drf_client import get_interview_questions
-                    questions_response = get_interview_questions(interview_type_id=int(interview_test_id))
+                    tid = _normalize_interview_test_id(interview_test_id)
+                    questions_response = get_interview_questions(interview_type_id=tid) if tid is not None else None
                     if questions_response and isinstance(questions_response, dict):
                         questions_list = _map_interview_questions_from_drf(questions_response)
                         if questions_list:

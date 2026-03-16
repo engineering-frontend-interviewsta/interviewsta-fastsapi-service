@@ -222,6 +222,18 @@ def _decode_jwt_payload(token: str) -> dict:
     )
 
 
+def _normalize_interview_access_decoded(decoded: dict) -> dict:
+    """Copy camelCase keys from X-Interview-Access-Token JWT into snake_case so payload validation gets them."""
+    out = dict(decoded)
+    if "feedbackItemId" in decoded:
+        out["feedback_item_id"] = decoded["feedbackItemId"]
+    if "interviewTestId" in decoded:
+        out["interview_test_id"] = decoded["interviewTestId"]
+    if "fastapiInterviewType" in decoded:
+        out["fastapi_interview_type"] = decoded["fastapiInterviewType"]
+    return out
+
+
 async def get_interview_access_payload(
     x_interview_access_token: Optional[str] = Header(None, alias="X-Interview-Access-Token"),
 ) -> "InterviewAccessTokenPayload":
@@ -250,6 +262,8 @@ async def get_interview_access_payload(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid interview access token",
         )
+    # Normalize camelCase from JWT so payload gets feedback_item_id etc.
+    decoded = _normalize_interview_access_decoded(decoded)
     try:
         return InterviewAccessTokenPayload.model_validate(decoded)
     except Exception as e:
@@ -286,6 +300,7 @@ async def get_interview_access_payload_from_token(token: str) -> "InterviewAcces
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid interview access token",
         )
+    decoded = _normalize_interview_access_decoded(decoded)
     try:
         return InterviewAccessTokenPayload.model_validate(decoded)
     except Exception as e:

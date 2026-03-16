@@ -12,7 +12,7 @@ import requests
 from langchain_tavily import TavilySearch
 from langgraph.checkpoint.memory import InMemorySaver
 from typing import Annotated,Literal,Tuple
-from ..utils import get_llm
+from workflows.utils import get_llm
 from typing_extensions import TypedDict
 import time
 import getpass
@@ -101,20 +101,6 @@ class ProblemSolvingSkills(BaseModel):
 Label = Literal["correct", "incorrect", "partially-correct", "cross-question"]
 
 
-# class FeedbackItem(BaseModel):
-#     '''
-#       For a pair of interaction, first mark their status and followed up by comments.
-#       For status, mark them -
-#       "cross-question" - If the interaction is part of cross-questioning
-#       "correct" -  If the interviewee has answered correctly
-#       "incorrect" - If the interviewee has answered incorrectly
-#       "partially-correct" - If the interviewee has answered only partially correct
-#       For comment, add the comments to tell how the answer could've been improved if it is not correct
-#     '''
-#     status: List[Label] = Field(..., description="Mark the interaction status")
-#     comment: List[str] = Field(..., description="Add any feedbacks.")
-
-
 class TechChatLogsFeedback(BaseModel):
     '''
         For a pair of interaction, first mark their status and followed up by comments.
@@ -145,23 +131,17 @@ class Tech_Strengths_and_areas_of_improvements(BaseModel):
     areas_of_improvements1: str = Field(..., description="1 crisp, actionable area for improvement in technical or problem-solving skills, addressed in second person.")
     areas_of_improvements2: str = Field(..., description="1 crisp, actionable area for improvement in technical or problem-solving skills, addressed in second person.")
     areas_of_improvements3: str = Field(..., description="1 crisp, actionable area for improvement in technical or problem-solving skills, addressed in second person.")
-# class InterviewAnalysisState(BaseModel):
-#     history: List[Dict[Literal['human','ai'],str]] = Field(...,description="Log of interactions between interviewer and interviewee")
-#     communication: CommunicationSkills = Field(...,description="Communication skills of the interviewee")
 
 class TechIntState(TypedDict):
-    history_log: str = Field(...,description="Has list of base messages")
-    problem_solving: ProblemSolvingSkills = Field(...,description="It has problem solving scoring results")
-    technical: TechnicalSkills = Field(...,description="It has technical scoring results")
+    history_log: str
+    problem_solving: ProblemSolvingSkills
+    technical: TechnicalSkills
     strengths_and_areas_of_improvements: Tech_Strengths_and_areas_of_improvements
     interaction_log_feedback: TechChatLogsFeedback
 
 def problem_solving_llm_Node(problem_solving_llm):
     def _Node(state:TechIntState) -> TechIntState:
         response = problem_solving_llm.invoke(state["history_log"])
-        # print(response.syntax)
-        # print(type(response))
-        # print(isinstance(response,ProblemSolvingSkills))
         state["problem_solving"] = response
         return state
     return _Node

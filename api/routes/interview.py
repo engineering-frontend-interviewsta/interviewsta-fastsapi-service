@@ -51,6 +51,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _user_identifier(user_info: Dict[str, Any]) -> str:
+    """Canonical user id for session ownership (from Bearer: uid/sub then email)."""
+    return user_info.get("uid") or user_info.get("sub") or user_info.get("email") or ""
+
+
 async def _run_sync(sync_fn, *args, **kwargs):
     """Run blocking sync work in thread pool to keep event loop free"""
     return await asyncio.to_thread(sync_fn, *args, **kwargs)
@@ -345,22 +350,31 @@ async def start_interview(
     3. Client polls GET /start-status/{task_id}
     """
     try:
-        logger.info(f"Starting {request.interview_type} interview for user {user_info['email']}")
-        # Merge feedback_item_id and interview_test_id from X-Interview-Access-Token into payload for feedback pipeline
+        # interview_type and user_id from decoded tokens (not body)
+        interview_type = (
+            getattr(interview_access, "fastapi_interview_type", None) or request.interview_type
+        )
+        if not interview_type:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="interview_type is required: set fastapiInterviewType in X-Interview-Access-Token",
+            )
+        user_id = request.user_id or user_info.get("uid") or user_info.get("sub") or user_info.get("email")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="user_id could not be resolved from Bearer token (sub/uid/email)",
+            )
+        logger.info(f"Starting {interview_type} interview for user {user_info.get('email')}")
+        # Merge feedback_item_id and interview_test_id from X-Interview-Access-Token into payload
         payload = dict(request.payload or {})
         if getattr(interview_access, "feedback_item_id", None):
             payload["feedback_item_id"] = interview_access.feedback_item_id
         if getattr(interview_access, "interview_test_id", None) is not None:
             payload["interview_test_id"] = interview_access.interview_test_id
-        # Queue Celery task (non-blocking)
         task = process_interview_start.apply_async(
-            args=[
-                request.session_id,
-                request.interview_type,
-                user_info["email"],
-                payload,
-            ],
-            queue="interview"
+            args=[request.session_id, interview_type, user_id, payload],
+            queue="interview",
         )
         
         logger.info(f"Interview task queued: {task.id}")
@@ -402,7 +416,7 @@ async def get_start_interview_status(
             _get_start_status_data_sync,
             task_id,
             redis_client,
-            user_info["email"],
+            _user_identifier(user_info),
         )
         
         return InterviewStartStatusResponse(**data)
@@ -451,7 +465,7 @@ async def submit_response(
             
             if not session:
                 return {"error": {"code": 404, "detail": "Session not found"}}
-            if session.get("user_id") != user_info["email"]:
+            if session.get("user_id") != _user_identifier(user_info):
                 return {"error": {"code": 403, "detail": "Not authorized to access this session"}}
             
             # Check processing flag
@@ -538,7 +552,7 @@ async def get_respond_task_status(
             session_id,
             task_id,
             redis_client,
-            user_info["email"],
+            _user_identifier(user_info),
         )
         
         # Validate data
@@ -591,7 +605,7 @@ async def submit_video_quality(
         
         # Verify session ownership
         session = session_manager.get_session(session_id)
-        if not session or session["user_id"] != user_info["email"]:
+        if not session or session["user_id"] != _user_identifier(user_info):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         
         # Store metrics for aggregation
@@ -856,7 +870,7 @@ async def stream_interview_status(
                 return
             
             # Verify ownership (email-based)
-            if session["user_id"] != user_info["email"]:
+            if session["user_id"] != _user_identifier(user_info):
                 logger.warning(f"SSE: Unauthorized access attempt to session {session_id}")
                 yield f"event: error\ndata: {json.dumps({'error': 'Unauthorized'})}\n\n"
                 return
@@ -984,7 +998,7 @@ async def end_interview(
                 detail="Session not found"
             )
         
-        if session["user_id"] != user_info["email"]:
+        if session["user_id"] != _user_identifier(user_info):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Not authorized to access this session"
@@ -1018,65 +1032,22 @@ async def end_interview(
         # #endregion
         
         task = None
-        # Queue feedback when there is history (so frontend gets task_id to poll).
-        # session_finished is still stored in metadata for analytics.
+        # Queue feedback when there is history (unified pipeline via feedback_item_id, else legacy per-type).
         history = session.get("history", "")
         if history:
             try:
-                from tasks.feedback_tasks import (
-                    generate_technical_feedback,
-                    generate_hr_feedback,
-                    generate_case_study_feedback,
-                    generate_communication_feedback,
-                    generate_debate_feedback,
+                from tasks.feedback_tasks import generate_feedback
+                task = generate_feedback.apply_async(
+                    args=[session_id, history, user_info["email"]],
+                    queue="feedback"
                 )
-                
-                # Queue appropriate feedback task (Company/Subject/Role-Based use technical feedback)
-                if interview_type in ("Technical Interview", "Coding Interview", "Company", "Subject", "Role-Based Interview"):
-                    feedback_type = "Technical"
-                else:
-                    feedback_type = interview_type
-                
-                logger.info(f"interview.py:end_interview:feedback_type. \n Feedback type: {feedback_type} \n interview_type: {interview_type}")
-
-                if feedback_type == "Technical":
-                    task = generate_technical_feedback.apply_async(
-                        args=[session_id, history, user_info["email"]],
-                        queue="feedback"
-                    )
-                elif feedback_type == "HR Interview":
-                    task = generate_hr_feedback.apply_async(
-                        args=[session_id, history, user_info["email"]],
-                        queue="feedback"
-                    )
-                elif feedback_type == "Case Study Interview":
-                    task = generate_case_study_feedback.apply_async(
-                        args=[session_id, history, user_info["email"]],
-                        queue="feedback"
-                    )
-                elif feedback_type in ("Communication Interview", "Communication"):
-                    task = generate_communication_feedback.apply_async(
-                        args=[session_id, history, user_info["email"]],
-                        queue="feedback"
-                    )
-                elif feedback_type in ("Debate Interview", "Debate"):
-                    task = generate_debate_feedback.apply_async(
-                        args=[session_id, history, user_info["email"]],
-                        queue="feedback"
-                    )
-                
-                # #region agent log
-                logger.info(f"interview.py:end_interview:feedback_queued. \n Feedback task queued successfully \n session_id: {session_id} \n feedback_type: {feedback_type} \n interview_type: {interview_type}")
-                # #endregion
-                
+                if task and task.id:
+                    redis_client.setex(f"feedback_task:{task.id}", 3600, session_id)
                 logger.info(f"Feedback generation queued for session {session_id}")
             except Exception as e:
-                # #region agent log
-                logger.info(f"interview.py:end_interview:feedback_error. \n Failed to queue feedback \n session_id: {session_id} \n error: {str(e)}")
-                # #endregion
                 logger.warning(f"Failed to queue feedback generation for session {session_id}: {e}")
         else:
-            logger.info(f"interview.py:end_interview:no_history. No history available for feedback generation session_id: {session_id}")
+            logger.info(f"No history for feedback session_id: {session_id}")
         
         logger.info(f"Interview session {session_id} ended successfully")
         
@@ -1178,7 +1149,7 @@ async def delete_session(
         if not session:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
         
-        if session["user_id"] != user_info["email"]:
+        if session["user_id"] != _user_identifier(user_info):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         
         # Delete session
