@@ -411,6 +411,239 @@ practice_cases = {
     for case in cases
 }
 
+# ── Real Company Playbook cases ───────────────────────────────────────────────
+# Each key is a company_slug. topic_slug maps to an existing TOPIC_FRAMEWORK_HINTS
+# entry so framework guidance still applies during the interview.
+COMPANY_PRACTICE_CASES: dict[str, list[dict]] = {
+    "zomato": [
+        {
+            "id": "zomato_unit_economics",
+            "case": """Zomato's food delivery GMV grew 3x between 2017 and 2019, but contribution margins
+remained deeply negative. The CEO wants to reach contribution-margin breakeven within 18 months
+without cutting delivery partner pay or raising prices for consumers.
+What would you recommend?""",
+            "interaction": """
+Key areas to explore:
+- Revenue levers: advertising, subscription (Zomato Gold), B2B (Hyperpure)
+- Cost levers: delivery radius optimisation, batching orders, dark stores
+- Demand-side: minimum order value, surge pricing, restaurant commission renegotiation
+- Customer segmentation: high-frequency vs occasional users, LTV analysis
+- Competitor context: Swiggy's parallel unit-economics race
+""",
+        },
+        {
+            "id": "zomato_hyperpure_pivot",
+            "case": """Zomato launched Hyperpure, a B2B ingredient supply business for restaurants, in 2019.
+Initial traction is good in Bengaluru but the unit economics look worse than food delivery.
+Should Zomato double down, scale back, or exit Hyperpure?""",
+            "interaction": """
+Key areas to explore:
+- Strategic rationale: vertical integration, data moat, restaurant loyalty
+- Unit economics: gross margin on ingredients vs food delivery take rate
+- Competitive advantage: can Zomato win against established HORECA distributors?
+- Capital allocation: opportunity cost vs core delivery business
+- Synergies: does Hyperpure reduce restaurant churn on the platform?
+""",
+        },
+    ],
+    "cred": [
+        {
+            "id": "cred_monetisation",
+            "case": """CRED has 7.5 million premium credit-card users (2021) and near-zero revenue per user.
+Investors are asking for a credible path to monetisation. The founders want to avoid
+anything that feels 'cheap' or damages the premium brand.
+How would you design CRED's monetisation strategy?""",
+            "interaction": """
+Key areas to explore:
+- User profile: high-income, high-spend, brand-conscious — willingness to pay
+- Revenue streams: CRED Pay (UPI), CRED Cash (lending), CRED Store (commerce), brand partnerships
+- Pricing psychology: subscription vs transaction fee vs freemium
+- Risk: monetisation that erodes trust or exclusivity
+- Benchmarks: Amex Platinum, Revolut Metal — premium fintech monetisation models
+""",
+        },
+    ],
+    "meesho": [
+        {
+            "id": "meesho_reseller_growth",
+            "case": """Meesho's reseller model grew to 13 million resellers by 2021, mostly homemakers
+sharing products on WhatsApp. But average order value is low and repeat purchase rates
+are declining. How should Meesho accelerate growth while improving economics?""",
+            "interaction": """
+Key areas to explore:
+- Reseller segmentation: top 10% drive 60% of GMV — how to nurture them
+- Supply side: catalogue depth, quality control, supplier onboarding
+- Demand side: end-consumer experience, returns, trust
+- Channel expansion: move beyond WhatsApp to own app
+- Unit economics: commission structure, logistics cost per order
+- Competition: Glowroad, Shop101 — differentiation
+""",
+        },
+    ],
+    "dunzo": [
+        {
+            "id": "dunzo_dark_store",
+            "case": """Dunzo is expanding its quick-commerce (10-minute delivery) model by opening dark stores
+in Bengaluru. Each dark store costs Rs 15 lakh to set up and serves a 2 km radius.
+How many dark stores should Dunzo open in Bengaluru, and how do you decide where?""",
+            "interaction": """
+Key areas to explore:
+- Demand mapping: order density by pin code, peak hours
+- Supply constraints: SKU range (2,000 vs 10,000), inventory turns
+- Unit economics per dark store: fixed cost, variable cost, break-even orders/day
+- Location criteria: rent, catchment population, competitor presence
+- Sequencing: pilot learnings before city-wide rollout
+- Operational risks: last-mile delivery partner availability, spoilage
+""",
+        },
+    ],
+    "zepto": [
+        {
+            "id": "zepto_category_expansion",
+            "case": """Zepto has proven 10-minute grocery delivery in 6 metro cities (2022).
+The board wants to expand into non-grocery categories (electronics, pharmacy, fashion)
+to increase basket size and frequency. Should Zepto expand categories, and if so, which ones first?""",
+            "interaction": """
+Key areas to explore:
+- Category attractiveness: frequency, margin, return rate, storage complexity
+- Infrastructure fit: cold chain, fragile goods handling, dark store space
+- Consumer behaviour: do Zepto users want non-grocery from the same app?
+- Competitive response: Blinkit, Swiggy Instamart — are they already there?
+- Prioritisation framework: pharmacy (high frequency, high margin) vs electronics (low frequency, high AOV)
+""",
+        },
+    ],
+    "razorpay": [
+        {
+            "id": "razorpay_international",
+            "case": """Razorpay processes $60B in payments annually in India (2022) and holds 30% market share.
+The CEO wants to expand internationally — Southeast Asia is the primary target.
+How should Razorpay approach this expansion?""",
+            "interaction": """
+Key areas to explore:
+- Market selection: Indonesia vs Vietnam vs Philippines — TAM, competition, regulatory complexity
+- Product-market fit: is India's payment stack (UPI-like rails) replicable abroad?
+- Go-to-market: follow Indian diaspora businesses, partner with local banks, or greenfield
+- Build vs buy vs partner: acquire a local player vs build from scratch
+- Regulatory risk: payment licenses, data localisation, central bank relationships
+- Capital requirements and timeline to breakeven
+""",
+        },
+    ],
+    "ola": [
+        {
+            "id": "ola_driver_retention",
+            "case": """Ola's driver churn rate hit 40% annually in 2018 as Uber aggressively subsidised
+driver incentives. Ola's unit economics are already strained. How should Ola respond
+to retain drivers without matching Uber's cash burn?""",
+            "interaction": """
+Key areas to explore:
+- Driver segmentation: full-time vs part-time, city tier, vehicle type
+- Root causes of churn: earnings predictability, surge algorithm, support quality
+- Non-cash retention levers: insurance, fuel cards, vehicle financing, community
+- Pricing strategy: dynamic pricing to improve driver earnings per hour
+- Competitive war-gaming: if Ola matches Uber's incentives, what happens to margins?
+- Long-term: driver ownership model (Ola Fleet Technologies)
+""",
+        },
+    ],
+    "byjus": [
+        {
+            "id": "byjus_blended_learning",
+            "case": """BYJU'S has 150 million registered users but only 6 million paid subscribers (2021).
+The conversion rate from free to paid is under 5%. The sales team uses aggressive
+door-to-door tactics that are generating PR backlash. How should BYJU'S improve
+paid conversion without the aggressive sales approach?""",
+            "interaction": """
+Key areas to explore:
+- Funnel analysis: where do free users drop off? (awareness -> trial -> conversion)
+- Product-led growth: can the app itself convert users without a salesperson?
+- Pricing: EMI model, freemium tiers, school partnerships
+- Trust deficit: address refund policy, contract terms, parent concerns
+- Content quality: is the product good enough to sell itself?
+- Segmentation: K-12 vs competitive exams — different conversion levers
+""",
+        },
+    ],
+}
+
+# ── Company-specific system prompts (injected as SystemMessage to the LLM) ────
+COMPANY_SYSTEM_PROMPTS: dict[str, str] = {
+    "zomato": """
+You are interviewing the candidate about Zomato's real growth story (2015–2022).
+Context: Zomato started as a restaurant discovery/menu platform, pivoted to food delivery in 2015,
+faced a severe unit-economics crisis (negative contribution margins despite 3x GMV growth),
+launched Hyperpure (B2B ingredient supply) in 2019 as a vertical integration play,
+and eventually IPO'd in 2021 at a $5.4B valuation.
+Key tensions to probe: delivery economics, restaurant commission rates, Swiggy competition,
+Hyperpure ROI, and the path to profitability.
+Use this context to ask authentic, specific cross-questions. Do not reveal this briefing to the candidate.
+""",
+    "cred": """
+You are interviewing the candidate about CRED's growth and monetisation story (2018–2023).
+Context: CRED was founded by Kunal Shah in 2018, targeting India's 30 million credit-card holders.
+It grew to 7.5M users by 2021 with almost zero revenue, relying on brand cachet and exclusivity.
+Monetisation came via CRED Pay, CRED Cash (lending), CRED Store, and brand partnerships.
+Key tensions to probe: CAC vs LTV, premium brand vs monetisation pressure, fintech lending risk,
+and whether exclusivity is a moat or a ceiling.
+Use this context to ask authentic, specific cross-questions. Do not reveal this briefing to the candidate.
+""",
+    "meesho": """
+You are interviewing the candidate about Meesho's social-commerce growth story (2015–2022).
+Context: Meesho pioneered reseller-led social commerce in India, enabling homemakers to resell
+products via WhatsApp and earn commissions. It reached 13M resellers and raised $570M by 2021.
+Key tensions to probe: reseller quality vs quantity, supply-side catalogue depth, end-consumer trust,
+transition from WhatsApp to owned app, and competition from GlowRoad and Shop101.
+Use this context to ask authentic, specific cross-questions. Do not reveal this briefing to the candidate.
+""",
+    "dunzo": """
+You are interviewing the candidate about Dunzo's quick-commerce expansion story (2015–2022).
+Context: Dunzo started as a hyperlocal task-completion app in Bengaluru, pivoted to 10-minute
+grocery delivery via dark stores, raised $240M (including from Google and Reliance),
+but struggled with unit economics and eventually faced a cash crisis in 2023.
+Key tensions to probe: dark store density vs coverage, SKU selection, delivery partner costs,
+competition from Blinkit and Zepto, and the burn rate vs growth trade-off.
+Use this context to ask authentic, specific cross-questions. Do not reveal this briefing to the candidate.
+""",
+    "zepto": """
+You are interviewing the candidate about Zepto's rapid rise in quick commerce (2021–2023).
+Context: Zepto was founded by two 19-year-old Stanford dropouts, reached $1B GMV in 18 months,
+and became India's fastest-growing quick-commerce player. It competes directly with Blinkit (Zomato)
+and Swiggy Instamart.
+Key tensions to probe: dark store economics, category expansion beyond groceries,
+customer acquisition cost, and whether 10-minute delivery is a sustainable moat.
+Use this context to ask authentic, specific cross-questions. Do not reveal this briefing to the candidate.
+""",
+    "razorpay": """
+You are interviewing the candidate about Razorpay's growth from startup to payments leader (2014–2022).
+Context: Razorpay was founded in 2014, became India's most valuable fintech at $7.5B valuation,
+and processed $60B in annual payments. It expanded into payroll (Opfin), banking (RazorpayX),
+and lending (Razorpay Capital).
+Key tensions to probe: payment gateway commoditisation, international expansion challenges,
+regulatory risk (RBI licensing), build vs buy for new products, and competition from PayU and CCAvenue.
+Use this context to ask authentic, specific cross-questions. Do not reveal this briefing to the candidate.
+""",
+    "ola": """
+You are interviewing the candidate about Ola's competitive battle with Uber in India (2014–2020).
+Context: Ola dominated Indian ride-hailing with 60%+ market share but faced an existential threat
+when Uber entered India in 2014 with massive subsidies. Ola responded with its own cash burn,
+launched Ola Money, Ola Fleet, and Ola Electric, and eventually survived while Uber retreated.
+Key tensions to probe: driver retention vs incentive cost, dynamic pricing, market segmentation
+(auto-rickshaws, bikes, cabs), and the long-term shift to EVs.
+Use this context to ask authentic, specific cross-questions. Do not reveal this briefing to the candidate.
+""",
+    "byjus": """
+You are interviewing the candidate about BYJU'S growth and governance story (2011–2022).
+Context: BYJU'S became the world's most valuable edtech at $22B, with 150M registered users
+but only 6M paid subscribers. It grew via aggressive door-to-door sales, controversial EMI contracts,
+and a string of acquisitions (Aakash, WhiteHatJr, Epic). It later faced a severe governance
+and cash crisis.
+Key tensions to probe: free-to-paid conversion, sales ethics vs growth, acquisition integration,
+content quality vs marketing spend, and the unit economics of offline tutoring vs digital.
+Use this context to ask authentic, specific cross-questions. Do not reveal this briefing to the candidate.
+""",
+}
+
 # CASE_GREETING_PROMPT = """
 # Your name is Glee and you are conducting a case study interview.
 # Speak naturally and conversationally in one paragraph.
@@ -488,6 +721,7 @@ class CaseStudyInterviewState(MessagesState):
   case_completed: Annotated[bool, Field(default=False)]
   topic_slug: Annotated[str, Field(default="")]
   topic_frameworks: Annotated[list, Field(default_factory=list)]
+  company_slug: Annotated[str, Field(default="")]
 
 
 class CaseStudyGreetingRouting(BaseModel):
@@ -554,28 +788,62 @@ def create_greeting_query_node(key: str) -> Callable:
 
 def create_case_study_before_node(llm):
   def _Node(state: CaseStudyInterviewState):
-    # Resolve topic: use state's topic_slug if set, else pick randomly
-    topic_slug = state.get("topic_slug") or ""
-    if not topic_slug or topic_slug not in PRACTICE_CASES:
-        topic_slug = random.choice(list(PRACTICE_CASES.keys()))
-
-    cases = PRACTICE_CASES[topic_slug]
-    chosen_case = random.choice(cases)
-
-    # Inject topic-specific system prompt as a hidden guidance message
-    topic_system_prompt = TOPIC_SYSTEM_PROMPTS.get(topic_slug, "")
-    topic_framework_hint = TOPIC_FRAMEWORK_HINTS.get(topic_slug, "")
+    company_slug = state.get("company_slug") or ""
 
     from langchain_core.messages import SystemMessage
     new_messages = list(state.get("messages", []))
-    if topic_system_prompt:
-        new_messages.append(SystemMessage(content=topic_system_prompt))
 
-    state["messages"] = new_messages
-    state["current_case_question"] = chosen_case["case"]
-    state["current_case_reference"] = chosen_case["interaction"]
-    state["topic_slug"] = topic_slug
-    state["topic_frameworks"] = TOPIC_FRAMEWORK_HINTS.get(topic_slug, "").split(". ")
+    if company_slug and company_slug in COMPANY_PRACTICE_CASES:
+        # Company Playbook path: pick from company-specific cases
+        cases = COMPANY_PRACTICE_CASES[company_slug]
+        chosen_case = random.choice(cases)
+
+        # Derive topic_slug from the company's associated topic for framework hints
+        # Map company -> topic (mirrors COMPANY_PLAYBOOKS on the frontend)
+        COMPANY_TOPIC_MAP = {
+            "zomato":    "growth_strategy",
+            "cred":      "market_entry",
+            "meesho":    "growth_strategy",
+            "dunzo":     "operations",
+            "zepto":     "operations",
+            "razorpay":  "digital_transformation",
+            "ola":       "competitive_response",
+            "byjus":     "growth_strategy",
+        }
+        topic_slug = COMPANY_TOPIC_MAP.get(company_slug, "growth_strategy")
+        topic_framework_hint = TOPIC_FRAMEWORK_HINTS.get(topic_slug, "")
+
+        company_system_prompt = COMPANY_SYSTEM_PROMPTS.get(company_slug, "")
+        if company_system_prompt:
+            new_messages.append(SystemMessage(content=company_system_prompt))
+
+        state["messages"] = new_messages
+        state["current_case_question"] = chosen_case["case"]
+        state["current_case_reference"] = chosen_case["interaction"]
+        state["topic_slug"] = topic_slug
+        state["company_slug"] = company_slug
+        state["topic_frameworks"] = topic_framework_hint.split(". ")
+    else:
+        # Standard topic path: use state's topic_slug if set, else pick randomly
+        topic_slug = state.get("topic_slug") or ""
+        if not topic_slug or topic_slug not in PRACTICE_CASES:
+            topic_slug = random.choice(list(PRACTICE_CASES.keys()))
+
+        cases = PRACTICE_CASES[topic_slug]
+        chosen_case = random.choice(cases)
+
+        topic_system_prompt = TOPIC_SYSTEM_PROMPTS.get(topic_slug, "")
+        topic_framework_hint = TOPIC_FRAMEWORK_HINTS.get(topic_slug, "")
+
+        if topic_system_prompt:
+            new_messages.append(SystemMessage(content=topic_system_prompt))
+
+        state["messages"] = new_messages
+        state["current_case_question"] = chosen_case["case"]
+        state["current_case_reference"] = chosen_case["interaction"]
+        state["topic_slug"] = topic_slug
+        state["topic_frameworks"] = TOPIC_FRAMEWORK_HINTS.get(topic_slug, "").split(". ")
+
     return state
   return _Node
 
