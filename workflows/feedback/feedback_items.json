@@ -204,6 +204,274 @@
           "Impact and Learning from Projects": 0
         }
       }
+    },
+    {
+      "id": "fi-case-company-growth",
+      "title": "Case Study — Company Growth Story",
+      "description": "Evaluation for real-world company growth case interviews. Tests problem structuring, business context awareness, quantitative reasoning, and synthesis quality.",
+      "items": {
+        "Problem Structuring": {
+          "MECE Framework Application": 0,
+          "Hypothesis Formation": 0,
+          "Issue Tree Construction": 0,
+          "Prioritization of Branches": 0
+        },
+        "Business Context Awareness": {
+          "Company and Industry Knowledge": 0,
+          "Competitive Landscape Understanding": 0,
+          "Real-world Constraint Recognition": 0,
+          "Historical Decision Awareness": 0
+        },
+        "Quantitative Reasoning": {
+          "Numerical Accuracy": 0,
+          "Unit Economics Awareness": 0,
+          "Estimation Quality": 0
+        },
+        "Communication & Synthesis": {
+          "Clarity of Recommendations": 0,
+          "Structured Delivery": 0,
+          "Prioritization of Insights": 0,
+          "Conciseness": 0
+        }
+      }
+    },
+    {
+      "id": "fi-case-profitability",
+      "title": "Case Study — Profitability",
+      "description": "Evaluation for profitability case interviews. Tests revenue and cost decomposition, quantitative reasoning, business intuition, and recommendation quality.",
+      "items": {
+        "Problem Structuring": {
+          "MECE Framework Application": 0,
+          "Hypothesis Formation": 0,
+          "Issue Tree Construction": 0,
+          "Prioritization of Branches": 0
+        },
+        "Quantitative Reasoning": {
+          "Numerical Accuracy": 0,
+          "Data Interpretation": 0,
+          "Estimation Quality": 0,
+          "Math Under Pressure": 0
+        },
+        "Business Intuition": {
+          "Revenue Driver Identification": 0,
+          "Cost Driver Identification": 0,
+          "Root Cause Diagnosis": 0,
+          "Industry Awareness": 0
+        },
+        "Communication & Synthesis": {
+          "Clarity of Recommendations": 0,
+          "Structured Delivery": 0,
+          "Prioritization of Insights": 0,
+          "Conciseness": 0
+        }
+      }
+    },
+    {
+      "id": "fi-case-market-entry",
+      "title": "Case Study — Market Entry",
+      "description": "Evaluation for market entry case interviews. Tests market assessment, strategic reasoning, quantitative sizing, and recommendation clarity.",
+      "items": {
+        "Market Assessment": {
+          "Market Sizing Accuracy": 0,
+          "Competitive Analysis Depth": 0,
+          "Attractiveness Criteria": 0,
+          "Segmentation Quality": 0
+        },
+        "Strategic Reasoning": {
+          "Entry Mode Selection": 0,
+          "Build vs Buy vs Partner Logic": 0,
+          "Risk Identification": 0,
+          "Sequencing of Entry": 0
+        },
+        "Quantitative Reasoning": {
+          "Market Size Estimation": 0,
+          "Unit Economics Awareness": 0,
+          "Investment Sizing": 0
+        },
+        "Communication & Synthesis": {
+          "Clarity of Go or No-Go Recommendation": 0,
+          "Structured Delivery": 0,
+          "Prioritization of Insights": 0,
+          "Conciseness": 0
+        }
+      }
+    },
+    {
+      "id": "fi-case-growth-strategy",
+      "title": "Case Study — Growth Strategy",
+      "description": "Evaluation for growth strategy case interviews. Tests growth lever identification, unit economics reasoning, prioritisation, and synthesis.",
+      "items": {
+        "Problem Structuring": {
+          "MECE Framework Application": 0,
+          "Hypothesis Formation": 0,
+          "Issue Tree Construction": 0,
+          "Prioritization of Branches": 0
+        },
+        "Growth Lever Identification": {
+          "Acquisition Lever Analysis": 0,
+          "Retention Lever Analysis": 0,
+          "Monetisation Lever Analysis": 0,
+          "Prioritisation of Levers": 0
+        },
+        "Quantitative Reasoning": {
+          "Unit Economics Awareness": 0,
+          "CAC and LTV Analysis": 0,
+          "Estimation Quality": 0
+        },
+        "Communication & Synthesis": {
+          "Clarity of Recommendations": 0,
+          "Structured Delivery": 0,
+          "Prioritization of Insights": 0,
+          "Conciseness": 0
+        }
+      }
+    },
+    {
+      "id": "fi-case-mergers-acquisitions",
+      "title": "Case Study — Mergers & Acquisitions",
+      "description": "Evaluation for M&A case interviews. Tests strategic rationale, synergy analysis, valuation intuition, and integration risk awareness.",
+      "items": {
+        "Strategic Rationale": {
+          "Clarity of Strategic Fit": 0,
+          "Identification of Revenue Synergies": 0,
+          "Identification of Cost Synergies": 0,
+          "Alternatives Considered": 0
+        },
+        "Valuation & Financials": {
+          "Valuation Sanity Check": 0,
+          "Synergy Quantification": 0,
+          "Payback Period Reasoning": 0
+        },
+        "Risk Assessment": {
+          "Integration Risk Identification": 0,
+          "Cultural and Operational Risks": 0,
+          "Regulatory and Legal Awareness": 0
+        },
+        "Communication & Synthesis": {
+          "Clarity of Go or No-Go Recommendation": 0,
+          "Structured Delivery": 0,
+          "Prioritization of Insights": 0,
+          "Conciseness": 0
+        }
+      }
+    },
+    {
+      "id": "fi-case-operations-cost",
+      "title": "Case Study — Operations & Cost",
+      "description": "Evaluation for operations and cost optimisation case interviews. Tests process thinking, cost driver identification, quantification, and prioritisation.",
+      "items": {
+        "Problem Structuring": {
+          "MECE Framework Application": 0,
+          "Hypothesis Formation": 0,
+          "Process Mapping Quality": 0,
+          "Prioritization of Branches": 0
+        },
+        "Cost Driver Analysis": {
+          "Fixed vs Variable Cost Distinction": 0,
+          "Root Cause Identification": 0,
+          "Benchmarking Awareness": 0,
+          "Make vs Buy Reasoning": 0
+        },
+        "Quantitative Reasoning": {
+          "Numerical Accuracy": 0,
+          "Impact Quantification": 0,
+          "Estimation Quality": 0
+        },
+        "Communication & Synthesis": {
+          "Clarity of Recommendations": 0,
+          "Quick Wins vs Structural Fixes Distinction": 0,
+          "Prioritization of Insights": 0,
+          "Conciseness": 0
+        }
+      }
+    },
+    {
+      "id": "fi-case-pricing-strategy",
+      "title": "Case Study — Pricing Strategy",
+      "description": "Evaluation for pricing strategy case interviews. Tests pricing framework application, elasticity reasoning, financial modelling, and recommendation quality.",
+      "items": {
+        "Pricing Framework Application": {
+          "Value-Based Pricing Reasoning": 0,
+          "Competitive Pricing Awareness": 0,
+          "Cost-Plus Consideration": 0,
+          "Pricing Model Selection": 0
+        },
+        "Quantitative Reasoning": {
+          "Revenue Impact Modelling": 0,
+          "Price Elasticity Reasoning": 0,
+          "LTV and Churn Impact": 0
+        },
+        "Business Intuition": {
+          "Customer Willingness to Pay": 0,
+          "Competitive Response Anticipation": 0,
+          "Segment-Level Pricing Insight": 0
+        },
+        "Communication & Synthesis": {
+          "Clarity of Recommendations": 0,
+          "Implementation Plan Quality": 0,
+          "Prioritization of Insights": 0,
+          "Conciseness": 0
+        }
+      }
+    },
+    {
+      "id": "fi-case-product-innovation",
+      "title": "Case Study — Product & Innovation",
+      "description": "Evaluation for product and innovation case interviews. Tests customer insight, opportunity sizing, prioritisation frameworks, and recommendation clarity.",
+      "items": {
+        "Problem Structuring": {
+          "Customer Need Identification": 0,
+          "Market Opportunity Sizing": 0,
+          "Hypothesis Formation": 0,
+          "Prioritization of Branches": 0
+        },
+        "Prioritisation Reasoning": {
+          "Impact on Key Metrics": 0,
+          "Effort and Complexity Assessment": 0,
+          "Strategic Alignment": 0,
+          "Framework Application": 0
+        },
+        "Business Intuition": {
+          "User Empathy": 0,
+          "Competitive Differentiation": 0,
+          "Monetisation Awareness": 0
+        },
+        "Communication & Synthesis": {
+          "Clarity of Build or Kill Recommendation": 0,
+          "Structured Delivery": 0,
+          "Prioritization of Insights": 0,
+          "Conciseness": 0
+        }
+      }
+    },
+    {
+      "id": "fi-case-turnaround-crisis",
+      "title": "Case Study — Turnaround & Crisis",
+      "description": "Evaluation for turnaround and crisis case interviews. Tests triage thinking, root cause analysis, stakeholder management, and action planning.",
+      "items": {
+        "Crisis Triage": {
+          "Cash Flow Awareness": 0,
+          "Immediate Action Identification": 0,
+          "Non-Negotiable vs Discretionary Costs": 0,
+          "Speed of Decision Making": 0
+        },
+        "Root Cause Analysis": {
+          "Structured Diagnosis": 0,
+          "Hypothesis Formation": 0,
+          "Data-Driven Reasoning": 0
+        },
+        "Stakeholder Management": {
+          "Investor Communication": 0,
+          "Employee and Team Considerations": 0,
+          "Supplier and Partner Management": 0
+        },
+        "Communication & Synthesis": {
+          "Clarity of 30-60-90 Day Plan": 0,
+          "Structured Delivery": 0,
+          "Prioritization of Actions": 0,
+          "Conciseness": 0
+        }
+      }
     }
   ]
   
