@@ -197,6 +197,10 @@ def save_feedback_items_to_db(
     interaction_logs: Optional[List[Any]] = None,
     interaction_status_logs: Optional[List[Any]] = None,
     user_id: Optional[str] = None,
+    communication_score: Optional[float] = None,
+    grammar_score: Optional[float] = None,
+    communication_metrics: Optional[Dict[str, Any]] = None,
+    grammar_metrics: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Save feedback via NestJS internal API using SaveFeedbackDto schema only.
@@ -221,6 +225,14 @@ def save_feedback_items_to_db(
         payload["sessionId"] = session_id
     if user_id:
         payload["userId"] = user_id
+    if communication_score is not None:
+        payload["communicationScore"] = communication_score
+    if grammar_score is not None:
+        payload["grammarScore"] = grammar_score
+    if communication_metrics is not None:
+        payload["communicationMetrics"] = communication_metrics
+    if grammar_metrics is not None:
+        payload["grammarMetrics"] = grammar_metrics
     path = "/interview-feedback/"
     full_url = f"{_drf_base_url()}{path}"
     logger.warning(
