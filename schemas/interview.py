@@ -68,9 +68,10 @@ class InterviewStartResponse(BaseModel):
 class UserResponseRequest(BaseModel):
     """
     User's response to interview question.
-    At least one of audio_data or text_response is required.
+    At least one of audio_data, text_response, or code_input is required.
     - audio_data: for speaking phases (transcribed).
     - text_response: for text-only phases (e.g. Communication comprehension/writing); can be sent alone.
+    - code_input: optional attachment on audio/text; may be sent alone for code-only turns.
     """
     audio_data: Optional[str] = None  # base64 encoded; omit for text-only (e.g. comprehension)
     text_response: Optional[str] = None  # plain text; can be the only field for writing phases

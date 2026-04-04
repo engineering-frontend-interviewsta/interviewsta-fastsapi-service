@@ -21,6 +21,7 @@ from langgraph.checkpoint.redis import RedisSaver
 from services.llm_metrics import (
     get_big5_from_transcript_llm,
     get_speech_summary_from_transcript_llm,
+    get_language_quality_scores_from_transcript_llm,
     get_candidate_transcript_from_messages,
 )
 from services.dynamic_metrics import get_stored_video_telemetry
@@ -99,6 +100,90 @@ def extract_qa_pairs(messages):
         return qa_pairs
 
 
+def _safe_score(value: Any) -> Optional[float]:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric < 0:
+        return 0.0
+    if numeric > 100:
+        return 100.0
+    return round(numeric, 2)
+
+
+def _get_universal_language_scores(messages, google_key: str) -> Dict[str, Optional[float]]:
+    transcript = get_candidate_transcript_from_messages(messages)
+    if not transcript.strip() or len(transcript.strip()) <= 30 or not google_key:
+        return {"communicationScore": None, "grammarScore": None}
+
+    speech_summary = get_speech_summary_from_transcript_llm(transcript, google_key) or {}
+    return {
+        "communicationScore": _safe_score(speech_summary.get("clarity")),
+        "grammarScore": _safe_score(speech_summary.get("grammar")),
+    }
+
+
+def _get_detailed_language_metrics(messages, google_key: str) -> Dict[str, Any]:
+    transcript = get_candidate_transcript_from_messages(messages)
+    if not transcript.strip() or len(transcript.strip()) <= 30 or not google_key:
+        return {
+            "communicationMetrics": None,
+            "grammarMetrics": None,
+            "communicationScore": None,
+            "grammarScore": None,
+        }
+
+    detailed = get_language_quality_scores_from_transcript_llm(transcript, google_key)
+    if detailed:
+        communication_metrics = detailed.get("communicationMetrics")
+        grammar_metrics = detailed.get("grammarMetrics")
+        return {
+            "communicationMetrics": communication_metrics,
+            "grammarMetrics": grammar_metrics,
+            "communicationScore": _safe_score((communication_metrics or {}).get("overall")),
+            "grammarScore": _safe_score((grammar_metrics or {}).get("overall")),
+        }
+
+    universal_scores = _get_universal_language_scores(messages, google_key)
+    if universal_scores["communicationScore"] is None and universal_scores["grammarScore"] is None:
+        return {
+            "communicationMetrics": None,
+            "grammarMetrics": None,
+            "communicationScore": None,
+            "grammarScore": None,
+        }
+
+    communication_score = universal_scores["communicationScore"]
+    grammar_score = universal_scores["grammarScore"]
+    return {
+        "communicationMetrics": (
+            {
+                "overall": communication_score,
+                "clarity": communication_score,
+                "fluency": communication_score,
+                "responseRelevance": communication_score,
+                "structure": communication_score,
+            }
+            if communication_score is not None
+            else None
+        ),
+        "grammarMetrics": (
+            {
+                "overall": grammar_score,
+                "grammarCorrectness": grammar_score,
+                "sentenceConstruction": grammar_score,
+                "vocabularyControl": grammar_score,
+                "conciseness": grammar_score,
+            }
+            if grammar_score is not None
+            else None
+        ),
+        "communicationScore": communication_score,
+        "grammarScore": grammar_score,
+    }
+
+
 def _run_unified_feedback_pipeline(
     session_id: str,
     history: str,
@@ -139,6 +224,8 @@ def _run_unified_feedback_pipeline(
     duration_seconds = session.get("duration", 0) if session else 0
     items = pipeline_result.get("sleeve_scores") or {}
 
+    language_metrics = _get_detailed_language_metrics(messages, google_key)
+
     save_feedback_items_to_db(
         user_email=user_email,
         session_id=session_id,
@@ -150,6 +237,10 @@ def _run_unified_feedback_pipeline(
         interaction_logs=interaction_logs,
         interaction_status_logs=interaction_status_logs,
         user_id=(session or {}).get("user_id"),
+        communication_score=language_metrics["communicationScore"],
+        grammar_score=language_metrics["grammarScore"],
+        communication_metrics=language_metrics["communicationMetrics"],
+        grammar_metrics=language_metrics["grammarMetrics"],
     )
     feedback = {
         "items": items,
@@ -159,6 +250,10 @@ def _run_unified_feedback_pipeline(
         "interaction_status_logs": interaction_status_logs,
         "interview_type_id": feedback_item_id,
         "interview_title": pipeline_result.get("interview_title", ""),
+        "communicationScore": language_metrics["communicationScore"],
+        "grammarScore": language_metrics["grammarScore"],
+        "communicationMetrics": language_metrics["communicationMetrics"],
+        "grammarMetrics": language_metrics["grammarMetrics"],
     }
     redis_key = f"feedback:{session_id}"
     redis_client.setex(redis_key, 3600, json.dumps(feedback))

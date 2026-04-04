@@ -489,13 +489,14 @@ async def submit_response(
             err = validation_result["error"]
             raise HTTPException(status_code=err["code"], detail=err["detail"])
         
-        # Validate input: at least one of audio or text (text-only is valid e.g. for comprehension phase)
+        # Validate input: at least one of audio, text, or code (code-only matches legacy “submit code tab” flows)
         has_audio = bool(request.audio_data and request.audio_data.strip())
         has_text = bool(request.text_response is not None and str(request.text_response).strip())
-        if not has_audio and not has_text:
+        has_code = bool(request.code_input is not None and str(request.code_input).strip())
+        if not has_audio and not has_text and not has_code:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Provide at least one of: audio_data (for speech) or text_response (for text/writing, e.g. Communication comprehension phase)"
+                detail="Provide at least one of: audio_data, text_response, or code_input",
             )
         
         # Queue complete pipeline task (non-blocking)
