@@ -15,6 +15,7 @@ INTERVIEW_TYPES: Tuple[str, ...] = (
     "Communication",
     "Role-Based Interview",
     "Debate",
+    "AIML",
 )
 
 
@@ -25,7 +26,7 @@ class InterviewAccessTokenPayload(BaseModel):
     title: str
     credits: int = 1
     duration: Optional[int] = None  # e.g. minutes
-    fastapi_interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate"]] = Field(None, alias="fastapiInterviewType")
+    fastapi_interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate", "AIML"]] = Field(None, alias="fastapiInterviewType")
     feedback_item_id: Optional[str] = Field(None, alias="feedbackItemId")  # e.g. "fi-coding-i"; used for feedback pipeline and DRF SaveFeedbackDto
 
     class Config:
@@ -41,7 +42,7 @@ class InterviewStartRequest(BaseModel):
     session_id: str
     payload: Dict[str, Any] = Field(default_factory=dict)
     # Optional overrides only if backend allows; prefer decoding from tokens
-    interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate"]] = None
+    interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate", "AIML"]] = None
     user_id: Optional[str] = None
 
     class Config:

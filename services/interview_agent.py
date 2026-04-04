@@ -16,11 +16,12 @@ from workflows.case_study import build_case_study_graph
 from workflows.communication import build_communication_graph
 from workflows.rolebased import get_role_based_graph
 from workflows.debate import build_debate_graph
+from workflows.aiml import get_aiml_graph
 
 logger = logging.getLogger(__name__)
 
 # Interview types that use a checkpointer (session state)
-INTERVIEW_TYPES = ("Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate")
+INTERVIEW_TYPES = ("Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate", "AIML")
 
 # Interrupt nodes per type (for human-in-the-loop). Must match *_after nodes in each workflow.
 INTERRUPT_NODES: Dict[str, List[str]] = {
@@ -32,6 +33,7 @@ INTERRUPT_NODES: Dict[str, List[str]] = {
     "Communication": ["Greeting_after", "Rapport_after", "PersonalDetails_after", "Speaking_after", "Speaking_feedback_after", "Comprehension_after", "Comprehension_feedback_after", "MCQ_after"],
     "Role-Based Interview": ["Greeting_after", "Personalised_after", "Technical_after", "Coding_after", "Project_after"],
     "Debate": ["Greeting_after", "Debate_after"],
+    "AIML": ["Greeting_after", "Conceptual_after", "Applied_after", "DeepDive_after"],
 }
 
 
@@ -140,6 +142,8 @@ class InterviewAgentService:
             graph = get_role_based_graph(google_key, role_val, checkpointer)
         elif interview_type == "Debate":
             graph = build_debate_graph(google_key, checkpointer)
+        elif interview_type == "AIML":
+            graph = get_aiml_graph(google_key, tavily_key, checkpointer)
         else:
             raise ValueError(f"Unknown interview type: {interview_type}")
 

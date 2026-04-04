@@ -23,6 +23,7 @@ from workflows.case_study import CaseStudyInterviewState
 from workflows.communication import CommunicationInterviewState
 from workflows.rolebased import RoleBasedInterviewState
 from workflows.debate import DebateInterviewState
+from workflows.aiml import AimlInterviewState
 from langchain_core.messages import HumanMessage
 from services.audio_processor import AudioProcessor
 
@@ -267,6 +268,15 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             history="",
             messages=[],
             rounds_completed=0,
+        )
+    elif interview_type == "AIML":
+        # interview_topic maps to the InterviewTest title (e.g. "Transformers & Attention"),
+        # which is embedded in the access token JWT as `title` and forwarded in payload.
+        return AimlInterviewState(
+            LastNode="",
+            history="",
+            interview_topic=payload.get("title", "AI/ML"),
+            TopicResearch="",
         )
     else:
         raise ValueError(f"Invalid interview type: {interview_type}")

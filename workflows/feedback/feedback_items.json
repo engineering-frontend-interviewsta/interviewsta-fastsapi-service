@@ -204,6 +204,37 @@
           "Impact and Learning from Projects": 0
         }
       }
+    },
+    {
+      "id": "fi-aiml",
+      "title": "AI / ML Engineering",
+      "description": "Evaluation rubric for AI/ML interviews covering conceptual depth, applied reasoning, system design, and communication.",
+      "items": {
+        "Conceptual Depth": {
+          "Theoretical Accuracy": 0,
+          "First-Principles Reasoning": 0,
+          "Breadth of Knowledge": 0,
+          "Precision of Terminology": 0
+        },
+        "Applied Reasoning": {
+          "Problem Framing": 0,
+          "Design Decisions": 0,
+          "Tradeoff Awareness": 0,
+          "Debugging & Diagnosis": 0
+        },
+        "System Thinking": {
+          "Scalability Awareness": 0,
+          "End-to-End Pipeline Reasoning": 0,
+          "Constraint Handling": 0,
+          "Alternative Approaches": 0
+        },
+        "Communication": {
+          "Clarity of Explanation": 0,
+          "Structured Thinking": 0,
+          "Responsiveness to Probes": 0,
+          "Technical Vocabulary": 0
+        }
+      }
     }
   ]
   

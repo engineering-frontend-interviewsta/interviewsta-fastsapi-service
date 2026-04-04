@@ -4,3 +4,4 @@ api/__pycache__/
 __pycache__/
 interview_logs/
 test/
+.venv

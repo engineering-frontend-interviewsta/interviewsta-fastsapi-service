@@ -25,7 +25,7 @@ class AudioProcessor:
         aws_secret_access_key: str = None,
         aws_region: str = "ap-south-1",
         polly_voice_id: str = "Joanna",
-        polly_engine: str = "neural",
+        polly_engine: str = "standard",
         polly_speech_rate: str = "75%",
         cartesia_model: str = "ink-whisper",
         cartesia_api_version: str = "2025-04-16"
