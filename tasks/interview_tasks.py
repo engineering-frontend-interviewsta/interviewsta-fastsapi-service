@@ -711,14 +711,19 @@ def process_user_response_with_transcription(
             # Text-only (e.g. Communication comprehension phase): use as-is and store as transcript
             self.session_manager.set_transcript(session_id, human_input)
             logger.info(f"Text-only response for session {session_id} ({len(human_input)} chars)")
-        
+
+        code_text = (code_input or "").strip() or None
+        if not human_input and code_text:
+            # Code-only (coding tab): must be valid without separate text/audio
+            human_input = f"[CODE INPUT]\n{code_text}"
+            self.session_manager.set_transcript(session_id, human_input)
+            logger.info(f"Code-only response for session {session_id} ({len(code_text)} chars)")
+        elif human_input and code_text:
+            human_input += f"\n\n[CODE INPUT]\n{code_text}"
+
         if not human_input:
             clear_processing_flag(self.redis_client, session_id)
-            raise ValueError("No input received - empty audio or text")
-        
-        # Add code input if provided
-        if code_input:
-            human_input += f"\n\n[CODE INPUT]\n{code_input}"
+            raise ValueError("No input received - empty audio, text, or code")
         
         # Step 2: Process through workflow - 50% progress
         self.update_state(
@@ -930,8 +935,8 @@ def process_user_response_with_transcription(
         )
         self.session_manager.set_status(session_id, "ai_responded")
         
-        # Clear processing flag
-        # clear_processing_flag(self.redis_client, session_id)
+        # Must clear so the next POST /respond is not rejected with 429 while TTL is still active.
+        clear_processing_flag(self.redis_client, session_id)
         
         logger.info(f"Response processed successfully for session {session_id}")
         
