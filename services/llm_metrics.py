@@ -26,19 +26,25 @@ class SpeechSummaryScores(BaseModel):
     clarity: int = Field(..., ge=0, le=100, description="Clarity and coherence")
 
 
+_GRANULAR_SCORE = (
+    "Integer 0-100; avoid 'round' numbers — do not end in 0 or 5 unless impossible to justify "
+    "(prefer e.g. 47, 52, 63, 71, 38, 29)."
+)
+
+
 class LanguageQualityScores(BaseModel):
     """Communication and grammar quality with overall + sub-metrics (0-100)."""
-    communication_overall: int = Field(..., ge=0, le=100)
-    communication_clarity: int = Field(..., ge=0, le=100)
-    communication_fluency: int = Field(..., ge=0, le=100)
-    communication_response_relevance: int = Field(..., ge=0, le=100)
-    communication_structure: int = Field(..., ge=0, le=100)
+    communication_overall: int = Field(..., ge=0, le=100, description="Mean of the four communication subs, rounded.")
+    communication_clarity: int = Field(..., ge=0, le=100, description=_GRANULAR_SCORE)
+    communication_fluency: int = Field(..., ge=0, le=100, description=_GRANULAR_SCORE)
+    communication_response_relevance: int = Field(..., ge=0, le=100, description=_GRANULAR_SCORE)
+    communication_structure: int = Field(..., ge=0, le=100, description=_GRANULAR_SCORE)
 
-    grammar_overall: int = Field(..., ge=0, le=100)
-    grammar_correctness: int = Field(..., ge=0, le=100)
-    grammar_sentence_construction: int = Field(..., ge=0, le=100)
-    grammar_vocabulary_control: int = Field(..., ge=0, le=100)
-    grammar_conciseness: int = Field(..., ge=0, le=100)
+    grammar_overall: int = Field(..., ge=0, le=100, description="Mean of the four grammar subs, rounded.")
+    grammar_correctness: int = Field(..., ge=0, le=100, description=_GRANULAR_SCORE)
+    grammar_sentence_construction: int = Field(..., ge=0, le=100, description=_GRANULAR_SCORE)
+    grammar_vocabulary_control: int = Field(..., ge=0, le=100, description=_GRANULAR_SCORE)
+    grammar_conciseness: int = Field(..., ge=0, le=100, description=_GRANULAR_SCORE)
 
 
 BIG5_PROMPT = """You are an expert at inferring personality from spoken or written text.
@@ -70,26 +76,35 @@ Transcript:
 Return the four scores as integers 0-100."""
 
 LANGUAGE_QUALITY_PROMPT = """You are evaluating interview communication quality from transcript text.
-Return scores (0-100) for communication and grammar with overall + sub-metrics.
+Return scores (0-100) for communication and grammar. You MUST output every field below; each sub-metric
+must be scored independently from evidence in the transcript.
 
 Communication sub-metrics:
-- communication_clarity
-- communication_fluency
-- communication_response_relevance
-- communication_structure
-- communication_overall (weighted synthesis of the four)
+- communication_clarity — how clear and understandable the wording is
+- communication_fluency — flow, ease of expression, pacing in text
+- communication_response_relevance — how directly answers address what was asked
+- communication_structure — organization, logical ordering of ideas
+- communication_overall — rounded mean of the four above (not a copy of a single sub-metric)
 
 Grammar sub-metrics:
-- grammar_correctness
-- grammar_sentence_construction
-- grammar_vocabulary_control
-- grammar_conciseness
-- grammar_overall (weighted synthesis of the four)
+- grammar_correctness — syntax, agreement, standard written/spoken correctness
+- grammar_sentence_construction — sentence variety, completeness, run-ons/fragments
+- grammar_vocabulary_control — word choice, precision, register fit
+- grammar_conciseness — tightness vs rambling (still correct where concise)
+- grammar_overall — rounded mean of the four above
 
-Scoring guidance:
-- Use actual evidence from transcript content.
-- Keep dimensions distinct (do not output the same number for every field).
-- If transcript is short, use conservative mid-range values but still differentiate.
+Hard rules:
+- Base every score on the transcript; do not invent content not present.
+- It is INVALID to use the same integer for all four sub-metrics in a group (communication or grammar).
+  At least two sub-metrics in each group must differ from the others by at least 3 points unless the
+  transcript is under ~40 words (then still vary where evidence allows).
+- For the EIGHT sub-metrics only (not necessarily the two overall fields): scores must feel precise.
+  Do NOT output values ending in 0 or 5 (forbidden examples: 40, 45, 50, 55, 60, 65, 70).
+  Use varied endings: 1-4, 6-9 (e.g. 47, 52, 63, 71, 38, 29, 56, 82). This is required for every
+  communication_clarity/fluency/response_relevance/structure and every grammar_* sub-field.
+  Exception: exactly 0 or 100 is allowed when the transcript clearly warrants a floor/ceiling.
+- The two *_overall fields should be the integer mean of their four subs (round half up), so they may
+  end in any digit.
 
 Transcript:
 ---
@@ -176,7 +191,8 @@ def get_language_quality_scores_from_transcript_llm(
     try:
         from workflows.utils import get_llm
 
-        llm = get_llm(google_api_key=google_api_key, temperature=0.2)
+        # Slightly above default to reduce defaulting to multiples of 5/10; structured output stays valid.
+        llm = get_llm(google_api_key=google_api_key, temperature=0.35)
         structured_llm = llm.with_structured_output(LanguageQualityScores)
         result = structured_llm.invoke(
             LANGUAGE_QUALITY_PROMPT.format(transcript=transcript[:12000])

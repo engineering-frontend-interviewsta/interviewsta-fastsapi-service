@@ -112,75 +112,35 @@ def _safe_score(value: Any) -> Optional[float]:
     return round(numeric, 2)
 
 
-def _get_universal_language_scores(messages, google_key: str) -> Dict[str, Optional[float]]:
-    transcript = get_candidate_transcript_from_messages(messages)
-    if not transcript.strip() or len(transcript.strip()) <= 30 or not google_key:
-        return {"communicationScore": None, "grammarScore": None}
-
-    speech_summary = get_speech_summary_from_transcript_llm(transcript, google_key) or {}
-    return {
-        "communicationScore": _safe_score(speech_summary.get("clarity")),
-        "grammarScore": _safe_score(speech_summary.get("grammar")),
-    }
-
-
 def _get_detailed_language_metrics(messages, google_key: str) -> Dict[str, Any]:
+    """
+    Communication + grammar come only from the language-quality LLM on the candidate transcript.
+    No fallback that copies one number into all sub-metrics; on failure everything is null.
+    """
+    empty: Dict[str, Any] = {
+        "communicationMetrics": None,
+        "grammarMetrics": None,
+        "communicationScore": None,
+        "grammarScore": None,
+    }
     transcript = get_candidate_transcript_from_messages(messages)
     if not transcript.strip() or len(transcript.strip()) <= 30 or not google_key:
-        return {
-            "communicationMetrics": None,
-            "grammarMetrics": None,
-            "communicationScore": None,
-            "grammarScore": None,
-        }
+        return empty
 
     detailed = get_language_quality_scores_from_transcript_llm(transcript, google_key)
-    if detailed:
-        communication_metrics = detailed.get("communicationMetrics")
-        grammar_metrics = detailed.get("grammarMetrics")
-        return {
-            "communicationMetrics": communication_metrics,
-            "grammarMetrics": grammar_metrics,
-            "communicationScore": _safe_score((communication_metrics or {}).get("overall")),
-            "grammarScore": _safe_score((grammar_metrics or {}).get("overall")),
-        }
+    if not detailed:
+        detailed = get_language_quality_scores_from_transcript_llm(transcript, google_key)
 
-    universal_scores = _get_universal_language_scores(messages, google_key)
-    if universal_scores["communicationScore"] is None and universal_scores["grammarScore"] is None:
-        return {
-            "communicationMetrics": None,
-            "grammarMetrics": None,
-            "communicationScore": None,
-            "grammarScore": None,
-        }
+    if not detailed:
+        return empty
 
-    communication_score = universal_scores["communicationScore"]
-    grammar_score = universal_scores["grammarScore"]
+    communication_metrics = detailed.get("communicationMetrics")
+    grammar_metrics = detailed.get("grammarMetrics")
     return {
-        "communicationMetrics": (
-            {
-                "overall": communication_score,
-                "clarity": communication_score,
-                "fluency": communication_score,
-                "responseRelevance": communication_score,
-                "structure": communication_score,
-            }
-            if communication_score is not None
-            else None
-        ),
-        "grammarMetrics": (
-            {
-                "overall": grammar_score,
-                "grammarCorrectness": grammar_score,
-                "sentenceConstruction": grammar_score,
-                "vocabularyControl": grammar_score,
-                "conciseness": grammar_score,
-            }
-            if grammar_score is not None
-            else None
-        ),
-        "communicationScore": communication_score,
-        "grammarScore": grammar_score,
+        "communicationMetrics": communication_metrics,
+        "grammarMetrics": grammar_metrics,
+        "communicationScore": _safe_score((communication_metrics or {}).get("overall")),
+        "grammarScore": _safe_score((grammar_metrics or {}).get("overall")),
     }
 
 
@@ -214,7 +174,7 @@ def _run_unified_feedback_pipeline(
     interaction_feedback = pipeline_result.get("interaction_feedback") or []
     interaction_status_logs = [{"status": x.get("status"), "comment": x.get("comment")} for x in interaction_feedback]
     history_ckpt, messages = get_interaction_history_from_redis(session_id)
-    interaction_logs = extract_qa_pairs(messages)[1:] if messages else []
+    interaction_logs = extract_qa_pairs(messages) if messages else []
 
     interview_test_id = (session or {}).get("interview_test_id")
     if interview_test_id is None and session:
@@ -358,7 +318,7 @@ def generate_technical_feedback(self, session_id: str, history: str, user_email:
         session = session_manager.get_session(session_id)
         
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
 
         # 1) Telemetry: only from stored data (set_video_telemetry) — same key as set endpoint
         video_telemetry = get_stored_video_telemetry(self.redis_client, session_id)
@@ -475,7 +435,7 @@ def generate_hr_feedback(self, session_id: str, history: str, user_email: str) -
         result = graph.invoke({"history_log": history})
 
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
         # Extract results
         feedback = {
             "clarity_score": result["communication_skills"].clarity,
@@ -609,7 +569,7 @@ def generate_case_study_feedback(self, session_id: str, history: str, user_email
         result = graph.invoke({"history_log": history})
 
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
         # Extract results
         feedback = {
             "problem_understanding_score": result["analytical"].problem_understanding,
@@ -729,7 +689,7 @@ def generate_communication_feedback(self, session_id: str, history: str, user_em
         result = graph.invoke({"history_log": history})
 
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
 
         s = result["speaking"]
         c = result["comprehension"]
@@ -821,7 +781,7 @@ def generate_debate_feedback(self, session_id: str, history: str, user_email: st
         result = graph.invoke({"history_log": history})
 
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
 
         arg = result["argumentation"]
         pers = result["persuasion"]
