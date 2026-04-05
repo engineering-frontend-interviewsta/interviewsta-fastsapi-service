@@ -235,6 +235,40 @@
           "Technical Vocabulary": 0
         }
       }
+    },
+    {
+      "id": "fi-resume-tailored-technical",
+      "title": "Resume-Tailored Technical",
+      "description": "Resume/JD-aware technical practice: resume discussion, personal fit, CS fundamentals, coding, projects, plus role-alignment and hire-likelihood signals.",
+      "items": {
+        "Resume & Role Alignment": {
+          "Project and Experience Depth": 0,
+          "Relevance to Target Role": 0,
+          "Clarity of Contributions": 0,
+          "Motivation and Fit Signals": 0
+        },
+        "Theoretical & CS Fundamentals": {
+          "OS Concepts": 0,
+          "DBMS & Data": 0,
+          "Computer Networks": 0,
+          "Role-Aligned Technical Breadth": 0
+        },
+        "Problem Solving & Coding": {
+          "Approach and Structure": 0,
+          "Algorithm and Data Structures": 0,
+          "Correctness and Edge Cases": 0,
+          "Code Quality": 0
+        },
+        "Communication & Professionalism": {
+          "Clarity Under Pressure": 0,
+          "Think-Aloud and Reasoning": 0,
+          "Responsiveness to Feedback": 0
+        },
+        "Outcome Signals (estimated)": {
+          "Job Match vs JD": 0,
+          "Interview Hire Likelihood": 0
+        }
+      }
     }
   ]
   

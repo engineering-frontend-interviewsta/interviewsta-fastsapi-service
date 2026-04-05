@@ -26,6 +26,7 @@ from workflows.debate import DebateInterviewState
 from workflows.aiml import AimlInterviewState
 from langchain_core.messages import HumanMessage
 from services.audio_processor import AudioProcessor
+from services.resume_technical_enrichment import enrich_technical_payload_from_resume
 
 logger = logging.getLogger(__name__)
 
@@ -185,9 +186,21 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
         return TechnicalInterviewState(
             LastNode="default",
             resume=payload.get("resume", ""),
+            job_title=(payload.get("job_title") or payload.get("jobTitle") or "") or "",
+            job_description=(payload.get("job_description") or payload.get("jobDescription") or "") or "",
             history="",
             TechnicalResearch=payload.get("TechnicalResearch", ""),
             CodingResearch=payload.get("CodingResearch", "")
+        )
+    if interview_type == "ResumeTailoredTechnical":
+        return TechnicalInterviewState(
+            LastNode="default",
+            resume=payload.get("resume", ""),
+            job_title=(payload.get("job_title") or payload.get("jobTitle") or "") or "",
+            job_description=(payload.get("job_description") or payload.get("jobDescription") or "") or "",
+            history="",
+            TechnicalResearch=payload.get("TechnicalResearch", ""),
+            CodingResearch=payload.get("CodingResearch", ""),
         )
     elif interview_type == "HR":
         return HRInterviewState(
@@ -503,6 +516,15 @@ def process_interview_start(
                             logger.info(f"{interview_type} interview: loaded {len(questions_list)} questions for interview_type_id={interview_test_id}")
                 except Exception as e:
                     logger.warning(f"Could not fetch interview questions for {interview_type}: {e}")
+
+        if interview_type == "ResumeTailoredTechnical":
+            payload = {**dict(payload), "resume_tailored_technical": True}
+        if interview_type in ("Technical", "ResumeTailoredTechnical"):
+            payload = enrich_technical_payload_from_resume(dict(payload))
+            try:
+                self.session_manager.update_session(session_id, {"payload": payload})
+            except Exception as e:
+                logger.warning(f"Could not persist enriched technical payload: {e}")
         
         # Step 2: Initialize workflow (40% progress)
         self.update_state(

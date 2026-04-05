@@ -13,6 +13,7 @@ from schemas.feedback import (
 from api.dependencies import get_current_user, get_redis
 from services.interview_session import InterviewSessionManager
 from tasks.feedback_tasks import (
+    generate_feedback,
     generate_technical_feedback,
     generate_hr_feedback,
     generate_case_study_feedback,
@@ -74,7 +75,12 @@ async def request_feedback_generation(
         task = None
         it = request.interview_type
 
-        if it == "Technical" or it in ("Company", "Subject", "Role-Based"):
+        if it == "ResumeTailoredTechnical":
+            task = generate_feedback.apply_async(
+                args=[request.session_id, history, user_info["email"]],
+                queue="feedback",
+            )
+        elif it == "Technical" or it in ("Company", "Subject", "Role-Based"):
             task = generate_technical_feedback.apply_async(
                 args=[request.session_id, history, user_info["email"]],
                 queue="feedback"

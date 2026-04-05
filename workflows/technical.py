@@ -38,7 +38,23 @@ class InterviewState(MessagesState):
 
 class TechnicalInterviewState(InterviewState):
     resume: Annotated[str, Field(default="No resume provided", description="Resume of the candidate")]
+    job_title: Annotated[str, Field(default="", description="Target role title for this application")]
+    job_description: Annotated[str, Field(default="", description="Job description text for the target role")]
 
+
+def _format_job_context(job_title: str, job_description: str) -> str:
+    t = (job_title or "").strip()
+    d = (job_description or "").strip()
+    if len(d) > 8000:
+        d = d[:8000] + "\n[truncated]"
+    if not t and not d:
+        return "No specific target role or job description was provided for this session."
+    parts = []
+    if t:
+        parts.append(f"Target role / title: {t}")
+    if d:
+        parts.append("Role / job description (align questions and examples with this when relevant):\n" + d)
+    return "\n\n".join(parts)
 
 
 technical_greeting_prompt = '''
@@ -64,13 +80,17 @@ Invite Questions: This is a critical step. Explicitly ask the candidate if they 
 
 Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely, keeping the context limited to the interview itself. After addressing their questions (or if they have none), proceed with the first part of the interview.
 
-[RESUME]
+Target role and job context (use to align tone and what you emphasize; do not read aloud verbatim):
+{job_context}
+
+Candidate resume (reference for tone and project discussion; do not read it aloud verbatim):
+{resume_text}
 '''
 
 technical_prompt = '''
 You are to act as a Technical Interviewer specializing in core Computer Science subjects like DBMS, OS, and Computer Networks. Your primary directive is to embody the persona of a real, empathetic, and knowledgeable interviewer. You should be polite and conversational, but your goal is to rigorously assess the candidate's depth of understanding.
 
-The interview must strictly follow the structured flow outlined below. You will be provided with the candidate's resume in the [RESUME] section for context and a list of technical questions in the [RESEARCH] section.
+The interview must strictly follow the structured flow outlined below. You will be provided with the candidate's resume in the [RESUME] section for context, their target role in [JOB_CONTEXT], and a list of technical questions in the [RESEARCH] section. When choosing and probing topics, prefer areas relevant to the target role and job description.
 
 The interview flow is as follows:
 
@@ -103,6 +123,9 @@ If their resume doesn't offer a clear link, ask a general application question
 
 After fully exploring the topic, gracefully transition to the next technical question. Repeat this entire process until you have asked a total of 5-7 questions.
 
+[JOB_CONTEXT]-
+{job_context}
+
 [RESUME]-
 {resume_text}
 
@@ -113,6 +136,9 @@ After fully exploring the topic, gracefully transition to the next technical que
 
 coding_prompt = '''
 You are to act as a technical interviewer conducting a live coding session. Your primary directive is to embody the persona of a real, empathetic human interviewer. This means you should be polite, conversational, and encouraging, rather than robotic. The interview must strictly follow the structured flow outlined below.
+
+[JOB_CONTEXT] (use to pick problems from [RESEARCH] that fit the role's likely stack and difficulty; do not read verbatim)
+{job_context}
 
 The interview flow is as follows:
 
@@ -140,7 +166,7 @@ Finally, ask the candidate to optimize their solution and discuss the expected t
 project_prompt = '''
 You are to act as a Senior Technical Interviewer conducting a deep-dive session on the candidate's past projects and experience. Your primary directive is to embody the persona of a real, empathetic, and technically sharp interviewer. You should be polite and conversational, but your core objective is to move beyond surface-level descriptions and rigorously assess the candidate's technical design choices, problem-solving skills, and individual contributions.
 
-You will be provided with the candidate's resume in the [RESUME] section. You must analyze it thoroughly to guide the entire conversation.
+You will be provided with the candidate's resume in the [RESUME] section and their target role in [JOB_CONTEXT]. You must analyze both thoroughly to guide the entire conversation and, where natural, relate their work to the role they are applying for.
 
 The interview flow is as follows:
 
@@ -186,6 +212,9 @@ After a thorough discussion (typically 5-10 minutes per project), smoothly trans
 
 Transition Example: "Thanks, that was a great overview of [Project 1]. I'd now like to hear about your work on [Project 2]..."
 
+[JOB_CONTEXT]-
+{job_context}
+
 [RESUME]-
 {resume_text}
 '''
@@ -207,11 +236,16 @@ Your work is to randomly pick 5-10 questions for all the topics here.
 {research_text}
 '''
 
-def get_greeting_prompt_template(resume):
-    return ChatPromptTemplate.from_messages([
-        ("system", technical_greeting_prompt.format(resume_text=resume)),
-    # ("human", "{input}")
-    ])
+def get_greeting_prompt_template(resume_text: str, job_context: str):
+    rt = (resume_text or "").strip() or "No resume text was provided for this session."
+    if len(rt) > 12000:
+        rt = rt[:12000] + "\n[truncated]"
+    jc = (job_context or "").strip() or _format_job_context("", "")
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", technical_greeting_prompt.format(resume_text=rt, job_context=jc)),
+        ]
+    )
 
 
 
@@ -259,7 +293,8 @@ def create_dummy_node() -> Callable:
 def create_greeting_node(Greeting_llm) -> Callable:
   def _Node(state: S) -> S:
     if state["LastNode"] != "Greeting":
-      greeting_prompt = get_greeting_prompt_template(state["resume"])
+      jc = _format_job_context(state.get("job_title", ""), state.get("job_description", ""))
+      greeting_prompt = get_greeting_prompt_template(state["resume"], jc)
       # print(greeting_prompt.format_messages())
       input_ = greeting_prompt.format_messages() + [{"role":"human","content":"Start the interview now"}]
       state["messages"] = state["messages"] + input_
@@ -300,8 +335,12 @@ def create_technical_node(technical_llm) -> Callable:
         # print("HR chh aa gye assi")
 
         if state["LastNode"] != "Technical":
-            state["messages"][0].content = technical_prompt.format(resume_text=state["resume"],
-                                                                   research_text=state["TechnicalResearch"])
+            jc = _format_job_context(state.get("job_title", ""), state.get("job_description", ""))
+            state["messages"][0].content = technical_prompt.format(
+                job_context=jc,
+                resume_text=state["resume"],
+                research_text=state["TechnicalResearch"],
+            )
         # print(state["messages"]
         # state["messages"] = state["messages"] + input_
 
@@ -340,7 +379,11 @@ def create_coding_node(technical_llm) -> Callable:
         # print("HR chh aa gye assi")
 
         if state["LastNode"] != "Coding":
-            state["messages"][0].content = coding_prompt.format(research_text=state["CodingResearch"])
+            jc = _format_job_context(state.get("job_title", ""), state.get("job_description", ""))
+            state["messages"][0].content = coding_prompt.format(
+                job_context=jc,
+                research_text=state["CodingResearch"],
+            )
         # print(state["messages"]
         # state["messages"] = state["messages"] + input_
 
@@ -377,7 +420,11 @@ def create_project_node(technical_llm) -> Callable:
         # print("HR chh aa gye assi")
 
         if state["LastNode"] != "Project":
-            state["messages"][0].content = project_prompt.format(resume_text=state["resume"])
+            jc = _format_job_context(state.get("job_title", ""), state.get("job_description", ""))
+            state["messages"][0].content = project_prompt.format(
+                job_context=jc,
+                resume_text=state["resume"],
+            )
         # print(state["messages"]
         # state["messages"] = state["messages"] + input_
 

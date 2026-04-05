@@ -1011,9 +1011,14 @@ async def end_interview(
         # Build session metadata: only set interview_test_id if request sent a valid value,
         # otherwise keep the value stored at start (so Company/Subject don't get overwritten with null).
         # Persist feedback_item_id from X-Interview-Access-Token for feedback pipeline (feedback_items.json).
+        # Prefer session interview_type (set at start from JWT) so client parent-tab strings
+        # like "technical" do not overwrite the authoritative FastAPI type.
+        stored_interview_type = (session or {}).get("interview_type")
+        effective_interview_type = stored_interview_type or interview_type
+
         updates = {
             "duration": int(duration) if isinstance(duration, (int, str)) else 0,
-            "interview_type": interview_type,
+            "interview_type": effective_interview_type,
             "session_finished": session_finished,
             "ended_at": datetime.utcnow().isoformat()
         }

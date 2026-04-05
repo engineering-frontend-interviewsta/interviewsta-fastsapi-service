@@ -134,7 +134,15 @@ def _normalize_interview_type_for_drf(interview_type: str) -> str:
     t = interview_type.strip()
     if t in ("Company", "Subject"):
         return "Coding Interview"
-    if t in ("Technical", "Coding", "Technical Interview", "Coding Interview", "Role-Based", "Role-Based Interview"):
+    if t in (
+        "Technical",
+        "ResumeTailoredTechnical",
+        "Coding",
+        "Technical Interview",
+        "Coding Interview",
+        "Role-Based",
+        "Role-Based Interview",
+    ):
         return "Technical Interview"
     if t in ("HR", "HR Interview"):
         return "HR Interview"

@@ -9,6 +9,7 @@ from typing import Optional, Any, Dict, List
 
 from langgraph.checkpoint.redis import RedisSaver
 from workflows.technical import get_technical_graph
+from workflows.resume_tailored_technical import get_resume_tailored_technical_graph
 from workflows.hr import get_hr_graph
 from workflows.coding import get_graph as get_coding_graph
 from workflows.companybuilder import build_company_graph
@@ -21,11 +22,31 @@ from workflows.aiml import get_aiml_graph
 logger = logging.getLogger(__name__)
 
 # Interview types that use a checkpointer (session state)
-INTERVIEW_TYPES = ("Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate", "AIML")
+INTERVIEW_TYPES = (
+    "Technical",
+    "ResumeTailoredTechnical",
+    "HR",
+    "Company",
+    "Subject",
+    "CaseStudy",
+    "Communication",
+    "Role-Based Interview",
+    "Debate",
+    "AIML",
+)
 
 # Interrupt nodes per type (for human-in-the-loop). Must match *_after nodes in each workflow.
 INTERRUPT_NODES: Dict[str, List[str]] = {
     "Technical": ["Greeting_after", "Technical_after", "Coding_after", "Project_after"],
+    "ResumeTailoredTechnical": [
+        "Greeting_after",
+        "Resume_discussion_after",
+        "Personal_fit_after",
+        "Technical_after",
+        "Coding_after",
+        "Project_after",
+        "Resume_tailored_summary_after",
+    ],
     "HR": ["Greeting_after", "HR_after"],
     "Company": ["Greeting_after", "Personalised_after", "Theoretical_after", "Project_after", "ProductScenario_after", "LogicalReasoning_after", "Coding_after"],
     "Subject": ["Greeting_after", "Personalised_after", "Theoretical_after", "Coding_after"],
@@ -127,6 +148,8 @@ class InterviewAgentService:
         logger.info("Building interview graph (singleton): %s", cache_key)
         if interview_type == "Technical":
             graph = get_technical_graph(google_key, tavily_key, checkpointer)
+        elif interview_type == "ResumeTailoredTechnical":
+            graph = get_resume_tailored_technical_graph(google_key, tavily_key, checkpointer)
         elif interview_type == "HR":
             graph = get_hr_graph(google_key, tavily_key, checkpointer)
         elif interview_type == "Company":

@@ -8,6 +8,7 @@ from datetime import datetime
 # Allowed fastapi_interview_type values (from X-Interview-Access-Token payload)
 INTERVIEW_TYPES: Tuple[str, ...] = (
     "Technical",
+    "ResumeTailoredTechnical",
     "HR",
     "Company",
     "Subject",
@@ -26,7 +27,20 @@ class InterviewAccessTokenPayload(BaseModel):
     title: str
     credits: int = 1
     duration: Optional[int] = None  # e.g. minutes
-    fastapi_interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate", "AIML"]] = Field(None, alias="fastapiInterviewType")
+    fastapi_interview_type: Optional[
+        Literal[
+            "Technical",
+            "ResumeTailoredTechnical",
+            "HR",
+            "Company",
+            "Subject",
+            "CaseStudy",
+            "Communication",
+            "Role-Based Interview",
+            "Debate",
+            "AIML",
+        ]
+    ] = Field(None, alias="fastapiInterviewType")
     feedback_item_id: Optional[str] = Field(None, alias="feedbackItemId")  # e.g. "fi-coding-i"; used for feedback pipeline and DRF SaveFeedbackDto
 
     class Config:
@@ -42,7 +56,20 @@ class InterviewStartRequest(BaseModel):
     session_id: str
     payload: Dict[str, Any] = Field(default_factory=dict)
     # Optional overrides only if backend allows; prefer decoding from tokens
-    interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate", "AIML"]] = None
+    interview_type: Optional[
+        Literal[
+            "Technical",
+            "ResumeTailoredTechnical",
+            "HR",
+            "Company",
+            "Subject",
+            "CaseStudy",
+            "Communication",
+            "Role-Based Interview",
+            "Debate",
+            "AIML",
+        ]
+    ] = None
     user_id: Optional[str] = None
 
     class Config:
@@ -51,6 +78,9 @@ class InterviewStartRequest(BaseModel):
                 "session_id": "uuid-123",
                 "payload": {
                     "resume": "Experienced developer...",
+                    "job_title": "Senior Backend Engineer",
+                    "job_description": "We need Python, Postgres, and distributed systems...",
+                    "resume_tailored_technical": True,
                     "TechnicalResearch": "..."
                 }
             }
