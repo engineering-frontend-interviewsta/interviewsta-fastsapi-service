@@ -2,6 +2,8 @@
 Singleton service for Interview agents (LangGraph).
 Graphs are compiled with a shared checkpointer (Redis by default); state is isolated per
 session via thread_id in config. One compiled graph per interview type is cached and reused.
+
+Uses per-type workflow modules under ``workflows/`` (technical, hr, coding, …).
 """
 import os
 import logging
@@ -19,10 +21,17 @@ from workflows.debate import build_debate_graph
 
 logger = logging.getLogger(__name__)
 
-# Interview types that use a checkpointer (session state)
-INTERVIEW_TYPES = ("Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate")
+INTERVIEW_TYPES = (
+    "Technical",
+    "HR",
+    "Company",
+    "Subject",
+    "CaseStudy",
+    "Communication",
+    "Role-Based Interview",
+    "Debate",
+)
 
-# Interrupt nodes per type (for human-in-the-loop). Must match *_after nodes in each workflow.
 INTERRUPT_NODES: Dict[str, List[str]] = {
     "Technical": ["Greeting_after", "Technical_after", "Coding_after", "Project_after"],
     "HR": ["Greeting_after", "HR_after"],
@@ -36,19 +45,11 @@ INTERRUPT_NODES: Dict[str, List[str]] = {
 
 
 class InterviewAgentService:
-    """
-    Singleton service for interview workflow agents.
-    Uses a single checkpointer (Redis by default); each invoke passes thread_id=session_id
-    so state is persisted per session. Compiled graphs are cached per interview type.
-    """
-
     _instance: Optional["InterviewAgentService"] = None
     _checkpointer: Any = None
     _redis_cm: Any = None
     _setup_done: bool = False
     _graphs: Dict[str, Any] = {}
-    _google_key: Optional[str] = None
-    _tavily_key: Optional[str] = None
 
     def __new__(cls, checkpointer: Any = None) -> "InterviewAgentService":
         if cls._instance is None:
@@ -58,10 +59,6 @@ class InterviewAgentService:
         return cls._instance
 
     def get_checkpointer(self):
-        """
-        Return the shared checkpointer. Uses Redis by default; call once to initialize.
-        Pass checkpointer=... in constructor for tests (e.g. InMemorySaver()).
-        """
         if self._checkpointer is not None:
             if not self._setup_done:
                 try:
@@ -85,13 +82,6 @@ class InterviewAgentService:
             self._setup_done = True
         return self._checkpointer
 
-    def _ensure_keys(self) -> tuple:
-        google_key = os.getenv("GOOGLE_API_KEY", "")
-        tavily_key = os.getenv("TAVILY_API_KEY", "")
-        if not google_key:
-            raise ValueError("Interview agent requires GOOGLE_API_KEY")
-        return google_key, tavily_key
-
     def get_graph(
         self,
         interview_type: str,
@@ -100,17 +90,11 @@ class InterviewAgentService:
         tavily_api_key: Optional[str] = None,
         role: Optional[str] = None,
     ):
-        """
-        Return the compiled workflow for the given interview type. Builds once per type
-        (per role for Role-Based Interview) and caches. Use config_for_session(session_id)
-        when invoking so state is stored per session (thread_id).
-        """
         if interview_type not in INTERVIEW_TYPES:
             raise ValueError(
                 f"Invalid interview_type: {interview_type}. Must be one of {INTERVIEW_TYPES}"
             )
 
-        # Role-Based Interview: cache key includes role so each role has its own graph
         cache_key = f"{interview_type}:{role}" if interview_type == "Role-Based Interview" and role else interview_type
         if cache_key in self._graphs:
             return self._graphs[cache_key]
@@ -121,8 +105,8 @@ class InterviewAgentService:
             raise ValueError("Interview agent requires GOOGLE_API_KEY (env or argument)")
 
         checkpointer = self.get_checkpointer()
-
         logger.info("Building interview graph (singleton): %s", cache_key)
+
         if interview_type == "Technical":
             graph = get_technical_graph(google_key, tavily_key, checkpointer)
         elif interview_type == "HR":
@@ -144,22 +128,17 @@ class InterviewAgentService:
             raise ValueError(f"Unknown interview type: {interview_type}")
 
         self._graphs[cache_key] = graph
-        self._google_key = google_key
-        self._tavily_key = tavily_key
         return graph
 
     def config_for_session(self, session_id: str, recursion_limit: int = 150) -> dict:
-        """Return LangGraph config for this session (thread_id = session_id)."""
         return {
             "configurable": {"thread_id": session_id},
             "recursion_limit": recursion_limit,
         }
 
     def get_interrupt_nodes(self, interview_type: str) -> List[str]:
-        """Return the interrupt_before node list for this interview type."""
         return INTERRUPT_NODES.get(interview_type, [])
 
 
 def get_interview_agent(checkpointer: Any = None) -> InterviewAgentService:
-    """Return the singleton InterviewAgentService. Pass checkpointer for tests (e.g. InMemorySaver())."""
     return InterviewAgentService(checkpointer=checkpointer)

@@ -16,8 +16,6 @@ from services.interview_session import InterviewSessionManager
 from services.interview_agent import get_interview_agent
 from workflows.technical import TechnicalInterviewState
 from workflows.hr import HRInterviewState
-from workflows.coding import SubjectInterviewState
-from workflows.companybuilder import CompanyInterviewState as CompanyInterviewStateBuilder
 from workflows.coding import CompanyInterviewState, SubjectInterviewState, Questions as CodingQuestions
 from workflows.case_study import CaseStudyInterviewState
 from workflows.communication import CommunicationInterviewState
@@ -179,29 +177,28 @@ def _serialize_questions_for_payload(questions: List[Any]) -> List[Dict[str, Any
 
 
 def create_initial_state(interview_type: str, payload: Dict[str, Any]):
-    """Create initial state for interview workflow"""
+    """Create initial state for legacy per-type LangGraph workflows."""
     if interview_type == "Technical":
         return TechnicalInterviewState(
             LastNode="default",
             resume=payload.get("resume", ""),
             history="",
             TechnicalResearch=payload.get("TechnicalResearch", ""),
-            CodingResearch=payload.get("CodingResearch", "")
+            CodingResearch=payload.get("CodingResearch", ""),
         )
-    elif interview_type == "HR":
+    if interview_type == "HR":
         return HRInterviewState(
             LastNode="default",
             resume=payload.get("resume", ""),
-            history=""
+            history="",
         )
-    elif interview_type == "Company":
+    if interview_type == "Company":
         tags = payload.get("Tags", [])
         tags_str = ", ".join(str(t) for t in tags) if isinstance(tags, list) else (tags or " ")
         company = (payload.get("company") or payload.get("Company") or "").strip()
         raw_questions = payload.get("Questions") or []
         questions_list = [
-            CodingQuestions(**q) if isinstance(q, dict) else q
-            for q in raw_questions
+            CodingQuestions(**q) if isinstance(q, dict) else q for q in raw_questions
         ]
         return CompanyInterviewState(
             LastNode="default",
@@ -214,14 +211,13 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             Tags=tags_str,
             resume=payload.get("resume", "No resume provided"),
         )
-    elif interview_type == "Subject":
+    if interview_type == "Subject":
         subject = (payload.get("subject") or payload.get("Subject") or "").strip()
         tags = payload.get("Tags", [])
         tags_str = ", ".join(str(t) for t in tags) if isinstance(tags, list) else (tags or " ")
         raw_questions = payload.get("Questions") or []
         questions_list = [
-            CodingQuestions(**q) if isinstance(q, dict) else q
-            for q in raw_questions
+            CodingQuestions(**q) if isinstance(q, dict) else q for q in raw_questions
         ]
         return SubjectInterviewState(
             LastNode="default",
@@ -233,7 +229,7 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             Difficulty=payload.get("Difficulty", "Medium"),
             Tags=tags_str,
         )
-    elif interview_type == "CaseStudy":
+    if interview_type == "CaseStudy":
         return CaseStudyInterviewState(
             LastNode="",
             messages=[],
@@ -241,9 +237,9 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             current_query="",
             current_case_question="",
             current_case_reference="",
-            case_completed=False
+            case_completed=False,
         )
-    elif interview_type == "Communication":  # ADD THIS BLOCK
+    if interview_type == "Communication":
         return CommunicationInterviewState(
             messages=[],
             LastNode="",
@@ -251,9 +247,9 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             current_query="",
             mcq_questions_asked=[],
             pending_mcq_answer="",
-            set_timer_on=False
+            set_timer_on=False,
         )
-    elif interview_type == "Role-Based Interview":
+    if interview_type == "Role-Based Interview":
         return RoleBasedInterviewState(
             LastNode="",
             history="",
@@ -261,60 +257,72 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             role=payload.get("role", "Frontend Development"),
             messages=[],
         )
-    elif interview_type == "Debate":
+    if interview_type == "Debate":
         return DebateInterviewState(
             LastNode="",
             history="",
             messages=[],
             rounds_completed=0,
         )
-    else:
-        raise ValueError(f"Invalid interview type: {interview_type}")
+    raise ValueError(f"Invalid interview type: {interview_type}")
 
 
 def update_workflow_state(workflow, config, interview_type: str, current_state, human_input: str):
-    """Update workflow state based on interview type"""
+    """Update workflow state based on interview type (legacy graphs)."""
     if interview_type == "CaseStudy":
-        # For CaseStudy, append HumanMessage
         human_message = HumanMessage(content=human_input)
         current_messages = current_state.values.get("messages", [])
         updated_messages = current_messages + [human_message]
-        
-        workflow.update_state(config, {
-            "messages": updated_messages,
-            "history": current_state.values.get("history", "") + "\nInterviewee-" + human_input
-        })
-    elif interview_type == "Communication":  # ADD THIS BLOCK
-        # For Communication, handle phase-specific logic
+        workflow.update_state(
+            config,
+            {
+                "messages": updated_messages,
+                "history": current_state.values.get("history", "")
+                + "\nInterviewee-"
+                + human_input,
+            },
+        )
+    elif interview_type == "Communication":
         human_message = HumanMessage(content=human_input)
         current_messages = current_state.values.get("messages", [])
         updated_messages = current_messages + [human_message]
-        
         last_node = current_state.values.get("LastNode", "")
-        
-        # Store MCQ answer if in MCQ phase
         if last_node in ("MCQ", "MCQ_after"):
-            workflow.update_state(config, {
-                "messages": updated_messages,
-                "current_query": human_input,
-                "pending_mcq_answer": human_input,
-                "history": current_state.values.get("history", "") + "\nInterviewee-" + human_input
-            })
+            workflow.update_state(
+                config,
+                {
+                    "messages": updated_messages,
+                    "current_query": human_input,
+                    "pending_mcq_answer": human_input,
+                    "history": current_state.values.get("history", "")
+                    + "\nInterviewee-"
+                    + human_input,
+                },
+            )
         else:
-            workflow.update_state(config, {
-                "messages": updated_messages,
-                "current_query": human_input,
-                "history": current_state.values.get("history", "") + "\nInterviewee-" + human_input
-            })
+            workflow.update_state(
+                config,
+                {
+                    "messages": updated_messages,
+                    "current_query": human_input,
+                    "history": current_state.values.get("history", "")
+                    + "\nInterviewee-"
+                    + human_input,
+                },
+            )
     else:
-        # For Technical, HR, Company, Subject, Role-Based: append HumanMessage so state matches graph expectations
         human_message = HumanMessage(content=human_input)
         current_messages = current_state.values.get("messages", [])
         updated_messages = current_messages + [human_message]
-        workflow.update_state(config, {
-            "messages": updated_messages,
-            "history": current_state.values.get("history", "") + "\nInterviewee-" + human_input
-        })
+        workflow.update_state(
+            config,
+            {
+                "messages": updated_messages,
+                "history": current_state.values.get("history", "")
+                + "\nInterviewee-"
+                + human_input,
+            },
+        )
 
 
 def clear_processing_flag(redis_client: Redis, session_id: str):
@@ -386,12 +394,9 @@ def process_interview_start(
     try:
         logger.info(f"Starting {interview_type} interview for session {session_id}")
         
-        # Step 1: Create session (20% progress)
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 20, "message": "Creating session..."}
-        )
-        
+        # Revisit later: Celery PROGRESS meta for /start-status & SSE progress events
+        # self.update_state(state="PROGRESS", meta={"progress": 20, "message": "Creating session..."})
+
         logger.info(f"Creating session {session_id} in Redis for user {user_id}")
         self.session_manager.create_session(session_id, interview_type, user_id, payload)
         
@@ -494,13 +499,8 @@ def process_interview_start(
                 except Exception as e:
                     logger.warning(f"Could not fetch interview questions for {interview_type}: {e}")
         
-        # Step 2: Initialize workflow (40% progress)
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 40, "message": "Initializing workflow..."}
-        )
-        
-        # Get singleton interview agent
+        # self.update_state(state="PROGRESS", meta={"progress": 40, "message": "Initializing workflow..."})
+
         agent = get_interview_agent()
         if interview_type == "Role-Based Interview":
             role = payload.get("role", "Frontend Development")
@@ -509,17 +509,11 @@ def process_interview_start(
             workflow = agent.get_graph(interview_type)
         config = agent.config_for_session(session_id)
         interrupt_nodes = agent.get_interrupt_nodes(interview_type)
-        
-        # Create initial state using module-level function
         initial_state = create_initial_state(interview_type, payload)
-        
+
         logger.info(f"Workflow initialized for {session_id}, invoking...")
-        
-        # Step 3: Invoke workflow (60% progress)
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 60, "message": "Generating greeting..."}
-        )
+
+        # self.update_state(state="PROGRESS", meta={"progress": 60, "message": "Generating greeting..."})
         
         response = workflow.invoke(
             initial_state,
@@ -536,12 +530,8 @@ def process_interview_start(
         
         logger.info(f"Greeting generated for {session_id}: '{message[:100]}...'")
         
-        # Step 4: Synthesize audio (80% progress)
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 80, "message": "Generating audio..."}
-        )
-        
+        # self.update_state(state="PROGRESS", meta={"progress": 80, "message": "Generating audio..."})
+
         logger.info(f"Synthesizing audio for interview {session_id}")
         
         audio_base64 = None
@@ -556,12 +546,8 @@ def process_interview_start(
         if not audio_base64:
             logger.warning(f"No audio generated for {session_id}, continuing without audio")
         
-        # Step 5: Store response (95% progress)
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 95, "message": "Finalizing..."}
-        )
-        
+        # self.update_state(state="PROGRESS", meta={"progress": 95, "message": "Finalizing..."})
+
         # Update session with response
         self.session_manager.update_session(session_id, {
             "message_count": len(response.get('messages', [])),
@@ -569,8 +555,6 @@ def process_interview_start(
             "last_node": last_node
         })
 
-        # Company/Subject (and Coding): store question progress and full Questions list for frontend
-        # (includes Initial_research-generated theoretical questions from coding.py)
         question_number, total_questions = None, None
         question_raw_content = None
         questions = response.get("Questions") or []
@@ -580,19 +564,24 @@ def process_interview_start(
             if isinstance(q, dict):
                 question_raw_content = q.get("question_raw_content") or q.get("raw_content") or ""
             else:
-                question_raw_content = getattr(q, "question_raw_content", None) or getattr(q, "raw_content", None) or ""
+                question_raw_content = (
+                    getattr(q, "question_raw_content", None)
+                    or getattr(q, "raw_content", None)
+                    or ""
+                )
         if interview_type in ("Company", "Subject"):
             total_questions = len(questions) if questions else None
             question_number = (current_idx + 1) if total_questions else None
-            # Persist enriched Questions (DRF + generated theoretical) to session payload
-            # so API can return interview_questions to frontend
             if questions:
                 serialized = _serialize_questions_for_payload(questions)
                 session = self.session_manager.get_session(session_id)
-                payload = (session or {}).get("payload") or {}
-                payload = {**payload, "Questions": serialized}
-                self.session_manager.update_session(session_id, {"payload": payload})
-                logger.info(f"Updated session payload with {len(serialized)} questions (incl. initial research)")
+                pl = (session or {}).get("payload") or {}
+                pl = {**pl, "Questions": serialized}
+                self.session_manager.update_session(session_id, {"payload": pl})
+                logger.info(
+                    "Updated session payload with %s questions (incl. initial research)",
+                    len(serialized),
+                )
 
         # Store response for retrieval (include question_raw_content for coding/company/subject frontend)
         self.session_manager.set_response(
@@ -677,20 +666,13 @@ def process_user_response_with_transcription(
         interview_type = session["interview_type"]
         payload_from_session = session.get("payload") or {}
 
-        # Step 1: Get human input (transcribe if needed) - 25% progress
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 10, "message": "Processing input..."}
-        )
-        
+        # Revisit later: Celery PROGRESS meta for response pipeline status
+        # self.update_state(state="PROGRESS", meta={"progress": 10, "message": "Processing input..."})
+
         human_input = (text_response or "").strip() or None
-        
+
         if audio_data and not human_input:
-            # Transcribe audio (speaking phase)
-            self.update_state(
-                state="PROGRESS",
-                meta={"progress": 25, "message": "Transcribing audio..."}
-            )
+            # self.update_state(state="PROGRESS", meta={"progress": 25, "message": "Transcribing audio..."})
             
             logger.info(f"Transcribing audio for session {session_id}")
             
@@ -720,15 +702,10 @@ def process_user_response_with_transcription(
         if code_input:
             human_input += f"\n\n[CODE INPUT]\n{code_input}"
         
-        # Step 2: Process through workflow - 50% progress
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 50, "message": "Processing response..."}
-        )
-        
+        # self.update_state(state="PROGRESS", meta={"progress": 50, "message": "Processing response..."})
+
         logger.info(f"Processing workflow for session {session_id}")
-        
-        # Get workflow and current state
+
         agent = get_interview_agent()
         if interview_type == "Role-Based Interview":
             role = payload_from_session.get("role", "Frontend Development")
@@ -752,15 +729,10 @@ def process_user_response_with_transcription(
                 "last_node": "finished"
             }
         
-        # Update state with user input using module-level function
         update_workflow_state(workflow, config, interview_type, current_state, human_input)
-        
-        # Invoke workflow
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 60, "message": "Generating AI response..."}
-        )
-        
+
+        # self.update_state(state="PROGRESS", meta={"progress": 60, "message": "Generating AI response..."})
+
         response = workflow.invoke(None, config=config, interrupt_before=interrupt_nodes)
         
         # Extract AI message
@@ -776,65 +748,58 @@ def process_user_response_with_transcription(
 
         logger.info(f"Interview type: {interview_type}")
         if interview_type == "Communication":
-             
-            # Extract speaking data
-            if last_node == "Speaking" and response.get('current_speaking'):
-                logger.info(f"Speaking interview phase and custom response")
-                speaking_data = response['current_speaking']
-                current_speaking = {
-                    "instruction": speaking_data.instruction if hasattr(speaking_data, 'instruction') else None,
-                    "paragraph": speaking_data.paragraph if hasattr(speaking_data, 'paragraph') else None,
-                }
-                logger.info(f"Extracted speaking data for session {session_id}")
-            
-            # Extract speaking feedback
-            if last_node in ("Speaking_feedback", "Speaking_feedback_after"):
-                speaking_feedback = message  # The feedback is in the message
-                logger.info(f"Extracted speaking feedback for session {session_id}")
-
-            # Extract comprehension instruction and question (so frontend can show writing prompt)
-            if last_node in ("Comprehension", "Comprehension_after") and response.get('current_writing_comprehension'):
-                comp_data = response['current_writing_comprehension']
-                if isinstance(comp_data, dict):
+            if last_node == "Speaking":
+                ent = response.get("current_speaking")
+                if isinstance(ent, dict):
+                    current_speaking = {
+                        "instruction": ent.get("instruction"),
+                        "paragraph": ent.get("paragraph"),
+                    }
+                elif ent is not None:
+                    current_speaking = {
+                        "instruction": getattr(ent, "instruction", None),
+                        "paragraph": getattr(ent, "paragraph", None),
+                    }
+                logger.info("Extracted speaking data for session %s", session_id)
+            elif last_node == "Speaking_feedback":
+                speaking_feedback = message
+                logger.info("Extracted speaking feedback for session %s", session_id)
+            elif last_node == "Comprehension":
+                ent = response.get("current_writing_comprehension")
+                if isinstance(ent, dict):
                     current_comprehension = {
-                        "instruction": comp_data.get("instruction"),
-                        "question": comp_data.get("question"),
+                        "instruction": ent.get("instruction"),
+                        "question": ent.get("question"),
                     }
-                else:
+                elif ent is not None:
                     current_comprehension = {
-                        "instruction": getattr(comp_data, 'instruction', None),
-                        "question": getattr(comp_data, 'question', None),
+                        "instruction": getattr(ent, "instruction", None),
+                        "question": getattr(ent, "question", None),
                     }
-                logger.info(f"Extracted comprehension data for session {session_id}")
-
-            # Extract comprehension feedback
-            if last_node in ("Comprehension_feedback", "Comprehension_feedback_after"):
-                comprehension_feedback = message  # The feedback is in the message
-                logger.info(f"Extracted comprehension feedback for session {session_id}")
-
-            # Extract MCQ entity (question, options, answer)
-            if last_node in ("MCQ", "MCQ_after") and response.get('current_mcq_entity'):
-                mcq_data = response['current_mcq_entity']
-                if isinstance(mcq_data, dict):
+                logger.info("Extracted comprehension data for session %s", session_id)
+            elif last_node == "Comprehension_feedback":
+                comprehension_feedback = message
+                logger.info("Extracted comprehension feedback for session %s", session_id)
+            elif last_node == "MCQ":
+                ent = response.get("current_mcq_entity")
+                if isinstance(ent, dict):
                     current_mcq = {
-                        "instruction": mcq_data.get("instruction"),
-                        "question": mcq_data.get("question"),
-                        "options": mcq_data.get("options"),
-                        "answer": mcq_data.get("answer"),
+                        "instruction": ent.get("instruction"),
+                        "question": ent.get("question"),
+                        "options": ent.get("options"),
+                        "answer": ent.get("answer"),
                     }
-                else:
+                elif ent is not None:
                     current_mcq = {
-                        "instruction": getattr(mcq_data, 'instruction', None),
-                        "question": getattr(mcq_data, 'question', None),
-                        "options": getattr(mcq_data, 'options', None),
-                        "answer": getattr(mcq_data, 'answer', None),
+                        "instruction": getattr(ent, "instruction", None),
+                        "question": getattr(ent, "question", None),
+                        "options": getattr(ent, "options", None),
+                        "answer": getattr(ent, "answer", None),
                     }
-                logger.info(f"Extracted MCQ data for session {session_id}")
-
-            # Extract MCQ feedback (at End node, the final summary/feedback is in the message)
-            if last_node == "End":
-                mcq_feedback = message  # Final feedback/wrap-up message
-                logger.info(f"Extracted MCQ/final feedback for session {session_id}")
+                logger.info("Extracted MCQ data for session %s", session_id)
+            elif last_node in ("End", "finished"):
+                mcq_feedback = message
+                logger.info("Extracted final / wrap-up for session %s", session_id)
         
         if not message:
             clear_processing_flag(self.redis_client, session_id)
@@ -845,11 +810,7 @@ def process_user_response_with_transcription(
         # Step 3: Generate TTS audio (80% progress) - Skip if dev mode
         audio_base64 = None
         if not skip_audio:
-            self.update_state(
-                state="PROGRESS",
-                meta={"progress": 80, "message": "Generating audio..."}
-            )
-            
+            # self.update_state(state="PROGRESS", meta={"progress": 80, "message": "Generating audio..."})
             try:
                 logger.info(f"Synthesizing audio for session {session_id}")
                 audio_base64 = self.audio_processor.synthesize_speech_base64(message)
@@ -860,11 +821,7 @@ def process_user_response_with_transcription(
         else:
             logger.info(f"[DEV MODE] Skipping audio generation for session {session_id}")
         
-        # Step 4: Store response in Redis (95% progress)
-        self.update_state(
-            state="PROGRESS",
-            meta={"progress": 95, "message": "Storing response..."}
-        )
+        # self.update_state(state="PROGRESS", meta={"progress": 95, "message": "Storing response..."})
 
         if interview_type == "Communication":
             phase_data = {}
@@ -897,7 +854,6 @@ def process_user_response_with_transcription(
             "last_node": last_node
         })
 
-        # Company/Subject (and Coding): store question progress and keep Questions in sync for frontend
         question_number, total_questions = None, None
         question_raw_content = None
         questions = response.get("Questions") or []
@@ -907,17 +863,20 @@ def process_user_response_with_transcription(
             if isinstance(q, dict):
                 question_raw_content = q.get("question_raw_content") or q.get("raw_content") or ""
             else:
-                question_raw_content = getattr(q, "question_raw_content", None) or getattr(q, "raw_content", None) or ""
+                question_raw_content = (
+                    getattr(q, "question_raw_content", None)
+                    or getattr(q, "raw_content", None)
+                    or ""
+                )
         if interview_type in ("Company", "Subject"):
             total_questions = len(questions) if questions else None
             question_number = (current_idx + 1) if total_questions else None
-            # Keep session payload Questions in sync with workflow state (incl. initial research)
             if questions:
                 serialized = _serialize_questions_for_payload(questions)
                 session = self.session_manager.get_session(session_id)
-                payload = (session or {}).get("payload") or {}
-                payload = {**payload, "Questions": serialized}
-                self.session_manager.update_session(session_id, {"payload": payload})
+                pl = (session or {}).get("payload") or {}
+                pl = {**pl, "Questions": serialized}
+                self.session_manager.update_session(session_id, {"payload": pl})
 
         self.session_manager.set_response(
             session_id,

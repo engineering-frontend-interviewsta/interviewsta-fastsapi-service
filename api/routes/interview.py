@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 import logging
 import asyncio
 import json
+import time
 from datetime import datetime
 
 from tasks.interview_tasks import (
@@ -26,8 +27,7 @@ from schemas.interview import (
     InterviewStatusResponse,
     VideoQualityData,
     InterviewStartStatusResponse,
-    VideoTelemetryData,
-    # VideoTelemetryPayload
+    InterviewVideoTelemetrySample,
 )
 from api.dependencies import (
     get_current_user,
@@ -44,11 +44,37 @@ from tasks.audio_tasks import transcribe_audio, synthesize_speech
 from redis import Redis
 from tasks.celery_app import celery_app
 from schemas.feedback import FeedbackStatusResponse
+from services.interview_test_loader import (
+    apply_interview_test_to_payload,
+    fetch_interview_test_by_id,
+    interview_test_row_is_active,
+)
 
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# POST /start stores the Celery task id here so GET /{session_id}/stream can tail progress
+# without passing task_id in the URL (single long-lived EventSource).
+PENDING_START_TASK_TTL_SEC = 900
+
+# Client sends telemetry ~every 20s; store time-ordered samples per session (newest at Redis list head).
+VIDEO_TELEMETRY_SAMPLES_TTL_SEC = 3600
+VIDEO_TELEMETRY_MAX_SAMPLES = 500
+
+
+def _video_telemetry_samples_key(session_id: str) -> str:
+    return f"session:{session_id}:video_telemetry_samples"
+
+
+def _video_telemetry_environment_key(session_id: str) -> str:
+    """One-shot attire / environment snapshot (first non-null payload wins)."""
+    return f"session:{session_id}:video_telemetry_environment"
+
+
+def _pending_start_task_key(session_id: str) -> str:
+    return f"session:{session_id}:pending_start_task"
 
 
 def _user_identifier(user_info: Dict[str, Any]) -> str:
@@ -156,7 +182,7 @@ def _get_start_status_data_sync(
                         "total_questions": response_data.get("total_questions"),
                         "question_raw_content": response_data.get("question_raw_content"),
                     }
-                    if session.get("interview_type") in ("Company", "Subject"):
+                    if session.get("interview_type") in ("Company", "Subject", "Technical"):
                         interview_ai_response["interview_questions"] = (session.get("payload") or {}).get("Questions")
                     interview_status = "ai_responded"
                 
@@ -295,7 +321,7 @@ def _get_respond_status_data_sync(
                         interview_ai_response["comprehensionfeedback"] = session_data.get("comprehension_feedback")
                         interview_ai_response["currentmcq"] = session_data.get("current_mcq")
                         interview_ai_response["mcqfeedback"] = session_data.get("mcq_feedback")
-                    if session_data and session_data.get("interview_type") in ("Company", "Subject"):
+                    if session_data and session_data.get("interview_type") in ("Company", "Subject", "Technical"):
                         interview_ai_response["interview_questions"] = (session_data.get("payload") or {}).get("Questions")
                     interview_status = "ai_responded"
             
@@ -372,13 +398,39 @@ async def start_interview(
             payload["feedback_item_id"] = interview_access.feedback_item_id
         if getattr(interview_access, "interview_test_id", None) is not None:
             payload["interview_test_id"] = interview_access.interview_test_id
+            row = await fetch_interview_test_by_id(str(interview_access.interview_test_id))
+            if row is not None and not interview_test_row_is_active(row):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="This interview test is not active",
+                )
+            if row is not None:
+                db_type = row.get("fastapi_interview_type")
+                if db_type and db_type != interview_type:
+                    logger.warning(
+                        "JWT fastapiInterviewType=%r differs from interview_tests row %s (%r)",
+                        interview_type,
+                        interview_access.interview_test_id,
+                        db_type,
+                    )
+                apply_interview_test_to_payload(payload, interview_type, row)
+            else:
+                logger.warning(
+                    "interview_test_id %r not found in interview_tests; using payload defaults",
+                    interview_access.interview_test_id,
+                )
         task = process_interview_start.apply_async(
             args=[request.session_id, interview_type, user_id, payload],
             queue="interview",
         )
         
         logger.info(f"Interview task queued: {task.id}")
-        
+        redis_client.setex(
+            _pending_start_task_key(request.session_id),
+            PENDING_START_TASK_TTL_SEC,
+            task.id,
+        )
+
         # Return immediately
         return InterviewStartResponse(
             task_id=task.id,
@@ -700,74 +752,67 @@ async def submit_video_quality(
         )
 
 @router.post("/{session_id}/video-telemetry")
-async def set_video_telemetry(
+async def post_video_telemetry(
     session_id: str,
-    payload: VideoTelemetryData,
+    payload: InterviewVideoTelemetrySample,
     user_info: Dict = Depends(get_current_user),
     interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
     redis_client: Redis = Depends(get_redis),
 ):
     """
-    Set video telemetry for a session. Accepts payload:
-    { "type": "video_quality", "data": { face, gaze, confidence, nervousness, engagement, distraction, big5_features } }.
-    Stores soft skills in video_metrics (for aggregation) and big5_features in big5_profile:{session_id}.
+    Append one telemetry sample for the session (client typically POSTs every ~20s).
+
+    Body: nested JSON with camelCase keys (``time``, ``duration``, ``environment``, ``audio``,
+    ``background``, ``camera``, ``lighting``, ``presence``, ``speech``, ``overallScore``,
+    ``suggestions``, ``criticalIssues``, …). Nested objects may be null or partial.
+
+    ``environment`` is stored **once** (first non-null value wins, ``SET NX``); it is **not**
+    repeated on each interval. Per-tick fields (lighting, camera, presence, speech, …) are
+    appended to Redis list ``session:{session_id}:video_telemetry_samples`` (newest first),
+    **without** the ``environment`` key, trimmed to ``VIDEO_TELEMETRY_MAX_SAMPLES``, TTL
+    ``VIDEO_TELEMETRY_SAMPLES_TTL_SEC``.
     """
     try:
         session_manager = InterviewSessionManager(redis_client)
         session = session_manager.get_session(session_id)
-        # if not session or session["user_id"] != user_info["uid"]:
-        #     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to access this session")
+        if not session or session["user_id"] != _user_identifier(user_info):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this session",
+            )
 
-        data = payload
-        avg_key = f"session:{session_id}:video_metrics"
-        count_key = f"session:{session_id}:video_telemetry_count"
+        stored = payload.model_dump(mode="json", by_alias=True, exclude_none=False)
+        env_val = stored.get("environment")
+        if env_val is not None:
+            env_key = _video_telemetry_environment_key(session_id)
+            redis_client.set(
+                env_key,
+                json.dumps(env_val, default=str),
+                ex=VIDEO_TELEMETRY_SAMPLES_TTL_SEC,
+                nx=True,
+            )
 
-        # big5_key = f"big5_profile:{session_id}"
-        ttl = 3600
+        series_payload = {k: v for k, v in stored.items() if k != "environment"}
+        key = _video_telemetry_samples_key(session_id)
+        redis_client.lpush(key, json.dumps(series_payload, default=str))
+        redis_client.ltrim(key, 0, VIDEO_TELEMETRY_MAX_SAMPLES - 1)
+        redis_client.expire(key, VIDEO_TELEMETRY_SAMPLES_TTL_SEC)
 
-        count = int(redis_client.get(count_key) or 0)
-        new_count = count + 1
-
-        # Store soft-skills sample for aggregation (same format as existing video-quality)
-        if count == 0:
-            avg_data = {
-                "face": data.face or "ok",
-                "gaze": data.gaze,
-                "confidence": data.confidence,
-                "nervousness": data.nervousness,
-                "engagement": data.engagement,
-                "distraction": data.distraction,
-            }
-            redis_client.setex(avg_key, ttl, json.dumps(avg_data))
-            redis_client.setex(count_key, ttl, str(new_count))
-        else:
-            existing = json.loads(redis_client.get(avg_key) or "{}")
-            def run_avg(old, new, c):
-                old = old if old is not None else 0
-                new = new if new is not None else 0
-                return (old * c + new) / (c + 1)
-            avg_data = {
-                "face": data.face or existing.get("face", "ok"),
-                "gaze": run_avg(existing.get("gaze"), data.gaze, count),
-                "confidence": run_avg(existing.get("confidence"), data.confidence, count),
-                "nervousness": run_avg(existing.get("nervousness"), data.nervousness, count),
-                "engagement": run_avg(existing.get("engagement"), data.engagement, count),
-                "distraction": run_avg(existing.get("distraction"), data.distraction, count),
-            }
-            redis_client.setex(avg_key, ttl, json.dumps(avg_data))
-            redis_client.setex(count_key, ttl, str(new_count))
-
-       
-
-        return {"status": "accepted", "message": "Video telemetry data recorded"}
+        count = redis_client.llen(key)
+        return {
+            "status": "accepted",
+            "message": "Video telemetry sample recorded",
+            "count": count,
+        }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error setting video telemetry for session {session_id}: {e}", exc_info=True)
+        logger.error(f"Error storing video telemetry for session {session_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
         )
+
 
 @router.get("/{session_id}/video-telemetry")
 async def get_video_telemetry(
@@ -776,32 +821,50 @@ async def get_video_telemetry(
     interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
     redis_client: Redis = Depends(get_redis),
 ):
-    """Get stored video telemetry (running average) for the session. Same shape as set payload."""
+    """
+    Return one-shot ``environment`` (if stored) plus time-series ``samples``, oldest first.
+    """
     try:
         session_manager = InterviewSessionManager(redis_client)
         session = session_manager.get_session(session_id)
-        if not session or session["user_id"] != user_info["email"]:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to access this session")
+        if not session or session["user_id"] != _user_identifier(user_info):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this session",
+            )
 
-        avg_key = f"session:{session_id}:video_telemetry_avg"
-        # big5_key = f"big5_profile:{session_id}"
-        count_key = f"session:{session_id}:video_telemetry_count"
+        env_key = _video_telemetry_environment_key(session_id)
+        env_raw = redis_client.get(env_key)
+        environment = None
+        if env_raw:
+            try:
+                environment = json.loads(env_raw)
+            except json.JSONDecodeError:
+                logger.warning("Invalid video_telemetry environment JSON for session %s", session_id)
 
-        avg_json = redis_client.get(avg_key)
-        if not avg_json:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No video telemetry for this session")
+        key = _video_telemetry_samples_key(session_id)
+        raw = redis_client.lrange(key, 0, -1)
+        samples = []
+        for item in reversed(raw):
+            try:
+                samples.append(json.loads(item))
+            except json.JSONDecodeError:
+                logger.warning("Skipping invalid video telemetry JSON for session %s", session_id)
 
-        data = json.loads(avg_json)
-        count = int(redis_client.get(count_key) or 0)
-        # big5_json = redis_client.get(big5_key)
-        # big5_features = json.loads(big5_json) if big5_json else None
-        # data["big5_features"] = big5_features
-        return {"type": "video_quality", "data": data, "count": count}
+        return {
+            "status": "ok",
+            "environment": environment,
+            "count": len(samples),
+            "samples": samples,
+        }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting video telemetry for session {session_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        logger.error(f"Error reading video telemetry for session {session_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
 
 
 @router.get("/{session_id}/stream")
@@ -817,11 +880,16 @@ async def stream_interview_status(
     Note: Token and interview_access_token must be passed as query parameters because
     EventSource doesn't support custom headers.
 
-    Events:
-    - transcription: User's transcribed speech
-    - ai_response: AI's response with audio
-    - status: Status changes
-    - complete: Interview completed
+    Use one long-lived connection for the whole interview. After ``POST /start`` (same ``session_id``),
+    the server stores the Celery task id in Redis; this stream picks it up and emits:
+
+    - ``progress``: same shape as polling ``GET /start-status/{task_id}`` (0–100 + message).
+    - ``ai_responded`` / ``ai_response``: when the greeting is ready (same as completed start-status).
+
+    No task id in the query string — open the stream before or after ``POST /start``.
+
+    Other events:
+    - transcription, status, complete, quality_warning, error
     """
     # Verify Bearer token from query parameter
     try:
@@ -848,13 +916,135 @@ async def stream_interview_status(
         try:
             logger.info(f"SSE stream connecting for session {session_id}")
             session_manager = InterviewSessionManager(redis_client)
-            
+            user_email = _user_identifier(user_info)
+
+            last_status = None
+            last_response_time = None
+
+            def _read_pending_start_task_id_sync() -> Optional[str]:
+                raw = redis_client.get(_pending_start_task_key(session_id))
+                if raw is None:
+                    return None
+                return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+            def _clear_pending_start_task_sync() -> None:
+                redis_client.delete(_pending_start_task_key(session_id))
+
+            # Wait for POST /start to set pending task id, or detect existing session (reconnect / no new start)
+            discover_deadline = time.monotonic() + 120.0
+            start_task_id: Optional[str] = None
+            while time.monotonic() < discover_deadline:
+                start_task_id = await _run_sync(_read_pending_start_task_id_sync)
+                if start_task_id:
+                    break
+                existing = await _run_sync(
+                    lambda: session_manager.get_session(session_id),
+                )
+                if existing:
+                    logger.info(
+                        "SSE: session %s already exists; skip start-task tail",
+                        session_id,
+                    )
+                    break
+                await asyncio.sleep(0.25)
+
+            # Tail start task on this same connection: progress → ai_responded (same as GET /start-status)
+            if start_task_id:
+                tail_deadline = time.monotonic() + 120.0
+                last_progress_key: Optional[tuple] = None
+                start_tail_ok = False
+                while time.monotonic() < tail_deadline:
+                    data = await _run_sync(
+                        _get_start_status_data_sync,
+                        start_task_id,
+                        redis_client,
+                        user_email,
+                    )
+                    sid = data.get("session_id")
+                    if sid and sid != session_id:
+                        logger.warning(
+                            "SSE start task session mismatch: path=%s task=%s",
+                            session_id,
+                            sid,
+                        )
+                        await _run_sync(_clear_pending_start_task_sync)
+                        yield f"event: error\ndata: {json.dumps({'error': 'Start task does not match this session_id'})}\n\n"
+                        return
+
+                    prog_key = (data.get("status"), data.get("progress"), data.get("message"))
+                    if prog_key != last_progress_key:
+                        last_progress_key = prog_key
+                        progress_payload = {
+                            "task_id": start_task_id,
+                            "session_id": sid or session_id,
+                            "status": data.get("status"),
+                            "progress": data.get("progress", 0),
+                            "message": data.get("message"),
+                            "error": data.get("error"),
+                        }
+                        yield f"event: progress\ndata: {json.dumps(progress_payload)}\n\n"
+
+                    if data.get("status") == "failed":
+                        await _run_sync(_clear_pending_start_task_sync)
+                        yield f"event: error\ndata: {json.dumps({'error': data.get('error') or 'Interview start failed', 'fatal': True})}\n\n"
+                        return
+
+                    if data.get("status") == "completed" and data.get("interview_ai_response"):
+                        full = {
+                            "task_id": start_task_id,
+                            "session_id": session_id,
+                            "status": "completed",
+                            "progress": 100,
+                            "message": data.get("message"),
+                            "result": data.get("result"),
+                            "error": data.get("error"),
+                            "interview_status": data.get("interview_status"),
+                            "interview_ai_response": data.get("interview_ai_response"),
+                            "interview_transcript": data.get("interview_transcript"),
+                            "interview_is_complete": data.get("interview_is_complete"),
+                            "interview_warning": data.get("interview_warning"),
+                        }
+                        yield f"event: ai_responded\ndata: {json.dumps(full)}\n\n"
+
+                        iar = data["interview_ai_response"]
+                        formatted_response = {
+                            "message": iar.get("message"),
+                            "audio": iar.get("audio"),
+                            "audio_base64": iar.get("audio_base64"),
+                            "last_node": iar.get("last_node"),
+                            "timestamp": iar.get("timestamp"),
+                            "question_number": iar.get("question_number"),
+                            "total_questions": iar.get("total_questions"),
+                            "question_raw_content": iar.get("question_raw_content"),
+                        }
+                        if iar.get("interview_questions") is not None:
+                            formatted_response["interview_questions"] = iar.get("interview_questions")
+                        yield f"event: ai_response\ndata: {json.dumps(formatted_response)}\n\n"
+
+                        last_response_time = iar.get("timestamp")
+                        session_manager.set_status(session_id, "waiting_for_response")
+                        await _run_sync(_clear_pending_start_task_sync)
+                        start_tail_ok = True
+                        break
+
+                    await asyncio.sleep(0.35)
+
+                if not start_tail_ok:
+                    await _run_sync(_clear_pending_start_task_sync)
+                    logger.warning(
+                        "SSE start task timed out for session %s (task_id=%s)",
+                        session_id,
+                        start_task_id,
+                    )
+                    yield f"event: error\ndata: {json.dumps({'error': 'Start task timed out or greeting not ready', 'fatal': True})}\n\n"
+                    return
+
             # Wait for session to be created (with timeout)
             session = None
-            max_wait = 20  # Wait up to 20 seconds (tasks can take 8-15s to complete)
-            wait_interval = 0.5  # Check every 500ms
-            waited = 0
-            
+            max_wait = 20 if not start_task_id else 5
+            wait_interval = 0.5
+            waited = 0.0
+
             while waited < max_wait:
                 session = session_manager.get_session(session_id)
                 if session:
@@ -862,60 +1052,66 @@ async def stream_interview_status(
                     break
                 await asyncio.sleep(wait_interval)
                 waited += wait_interval
-            
-            # Verify session exists
+
             if not session:
                 logger.warning(f"SSE: Session {session_id} not found after {max_wait}s timeout")
                 yield f"event: error\ndata: {json.dumps({'error': 'Session not found or timed out'})}\n\n"
                 return
-            
-            # Verify ownership (email-based)
-            if session["user_id"] != _user_identifier(user_info):
+
+            if session["user_id"] != user_email:
                 logger.warning(f"SSE: Unauthorized access attempt to session {session_id}")
                 yield f"event: error\ndata: {json.dumps({'error': 'Unauthorized'})}\n\n"
                 return
-            
+
             logger.info(f"SSE: Stream established for session {session_id}")
-            
-            last_status = None
-            last_response_time = None
-            
+
             # Poll for updates every second
             while True:
                 try:
                     current_status = session_manager.get_status(session_id)
-                    
-                    # Status changed
+
                     if current_status != last_status:
                         last_status = current_status
                         yield f"event: status\ndata: {json.dumps({'status': current_status})}\n\n"
-                        
-                        # If completed, send final event and close
+
                         if current_status == "completed":
                             yield f"event: complete\ndata: {json.dumps({'status': 'completed'})}\n\n"
                             break
-                    
-                    # Check for new AI response
+
                     if current_status == "ai_responded":
                         response_data = session_manager.get_response(session_id)
                         if response_data and response_data.get("timestamp") != last_response_time:
                             last_response_time = response_data.get("timestamp")
-                            
-                            # Format response with both audio and audio_base64 for compatibility
+
                             formatted_response = {
                                 "message": response_data.get("message"),
                                 "audio": response_data.get("audio"),
-                                "audio_base64": response_data.get("audio"),  # Add audio_base64 field
+                                "audio_base64": response_data.get("audio"),
                                 "last_node": response_data.get("last_node"),
                                 "timestamp": response_data.get("timestamp"),
                                 "question_number": response_data.get("question_number"),
                                 "total_questions": response_data.get("total_questions"),
                                 "question_raw_content": response_data.get("question_raw_content"),
                             }
-                            
+                            sess = session_manager.get_session(session_id)
+                            if sess and sess.get("interview_type") in ("Company", "Subject", "Technical"):
+                                formatted_response["interview_questions"] = (sess.get("payload") or {}).get("Questions")
+
+                            responded = {
+                                "task_id": None,
+                                "session_id": session_id,
+                                "status": "completed",
+                                "progress": 100,
+                                "message": None,
+                                "interview_status": "ai_responded",
+                                "interview_ai_response": dict(formatted_response),
+                                "interview_transcript": session_manager.get_transcript(session_id),
+                                "interview_is_complete": False,
+                                "interview_warning": session_manager.get_warning(session_id),
+                            }
+                            yield f"event: ai_responded\ndata: {json.dumps(responded)}\n\n"
                             yield f"event: ai_response\ndata: {json.dumps(formatted_response)}\n\n"
-                            
-                            # Reset status to waiting after sending response
+
                             session_manager.set_status(session_id, "waiting_for_response")
                     
                     # Check for new transcription
@@ -1025,6 +1221,23 @@ async def end_interview(
         if getattr(interview_access, "feedback_item_id", None):
             updates["feedback_item_id"] = interview_access.feedback_item_id
         session_manager.update_session(session_id, updates)
+
+        # Telemetry scoring (stub technical rubric); logs full ScoredFeedback JSON
+        try:
+            from services.telemetry_scoring import log_telemetry_scoring_at_session_end
+
+            dur_min = float(duration) / 60.0 if duration else 0.0
+            log_telemetry_scoring_at_session_end(
+                redis_client,
+                session_id,
+                dur_min if dur_min > 0 else 1.0,
+            )
+        except Exception as te:
+            logger.warning(
+                "Could not run telemetry scoring for session %s: %s",
+                session_id,
+                te,
+            )
         
         # If session is finished and has conversation history, trigger feedback generation
         # #region agent log

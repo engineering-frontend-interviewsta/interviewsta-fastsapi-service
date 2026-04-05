@@ -111,6 +111,7 @@ def _run_unified_feedback_pipeline(
     """Run the unified feedback pipeline (feedback_items.json + service.py) and save to DB + Redis."""
     from workflows.feedback.service import run_feedback_pipeline, get_feedback_item
     from services.drf_client import save_feedback_items_to_db
+    from services.telemetry_scoring import compute_video_telemetry_score_payload
 
     if not get_feedback_item(feedback_item_id):
         raise ValueError(f"Unknown feedback_item_id: {feedback_item_id}")
@@ -137,6 +138,11 @@ def _run_unified_feedback_pipeline(
         interview_test_id = payload.get("interview_type_id") or payload.get("interview_test_id")
     interview_test_id_str = str(interview_test_id) if interview_test_id is not None else ""
     duration_seconds = session.get("duration", 0) if session else 0
+    dur_sec = int(duration_seconds) if duration_seconds else 0
+    session_duration_minutes = float(dur_sec) / 60.0 if dur_sec else 1.0
+    telemetry_data = compute_video_telemetry_score_payload(
+        redis_client, session_id, session_duration_minutes
+    )
     items = pipeline_result.get("sleeve_scores") or {}
 
     save_feedback_items_to_db(
@@ -145,11 +151,12 @@ def _run_unified_feedback_pipeline(
         interview_test_id=interview_test_id_str,
         items=items,
         strengths=strengths_list,
-        duration_seconds=int(duration_seconds) if duration_seconds else 0,
+        duration_seconds=dur_sec,
         areas_of_improvements=improvements_list,
         interaction_logs=interaction_logs,
         interaction_status_logs=interaction_status_logs,
         user_id=(session or {}).get("user_id"),
+        telemetry_data=telemetry_data if telemetry_data is not None else {},
     )
     feedback = {
         "items": items,

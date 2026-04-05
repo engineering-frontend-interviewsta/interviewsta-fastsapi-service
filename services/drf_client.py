@@ -197,11 +197,13 @@ def save_feedback_items_to_db(
     interaction_logs: Optional[List[Any]] = None,
     interaction_status_logs: Optional[List[Any]] = None,
     user_id: Optional[str] = None,
+    telemetry_data: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Save feedback via NestJS internal API using SaveFeedbackDto schema only.
     Payload must contain DTO fields: interviewTestId, items, strengths, duration,
-    areasOfImprovements, interactionLogs, interactionStatusLogs.
+    areasOfImprovements, interactionLogs, interactionStatusLogs, telemetryData.
+    ``telemetryData`` matches the video telemetry score JSON (timeline, presence, speech, environment, etc.).
     user_email/session_id/user_id may optionally be forwarded if the Nest endpoint accepts them.
     """
     payload: Dict[str, Any] = {
@@ -213,6 +215,7 @@ def save_feedback_items_to_db(
         "interactionLogs": interaction_logs or [],
         "interactionStatusLogs": interaction_status_logs or [],
         "sessionId": session_id,
+        "telemetryData": telemetry_data if telemetry_data is not None else {},
     }
     # Optionally include identity fields if the NestJS DTO supports them
     if user_email:

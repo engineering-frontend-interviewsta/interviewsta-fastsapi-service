@@ -3,6 +3,7 @@ Configuration settings for FastAPI Interview Service
 """
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from urllib.parse import quote_plus
 import os
 
 
@@ -21,8 +22,32 @@ class Settings(BaseSettings):
     # Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379")
     
-    # Database
+    # Database (SQLAlchemy / existing code)
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://localhost/interviewsta")
+
+    # Prisma Client Python — use PRISMA_DATABASE_URL, or build from DB_* when DB_NAME is set
+    PRISMA_DATABASE_URL: str = ""
+    DB_HOST: str = "localhost"
+    DB_PORT: int = 5432
+    DB_USERNAME: str = "arryuannkhanna"
+    DB_PASSWORD: str = ""
+    DB_NAME: str = "my_new_db"
+
+    def get_prisma_database_url(self) -> str:
+        """Connection string for Prisma (postgresql)."""
+        if self.PRISMA_DATABASE_URL and self.PRISMA_DATABASE_URL.strip():
+            return self.PRISMA_DATABASE_URL.strip()
+        if self.DB_NAME and self.DB_NAME.strip():
+            user = self.DB_USERNAME or ""
+            pw = self.DB_PASSWORD or ""
+            if pw:
+                auth = f"{quote_plus(user)}:{quote_plus(pw)}@"
+            elif user:
+                auth = f"{quote_plus(user)}@"
+            else:
+                auth = ""
+            return f"postgresql://{auth}{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME.strip()}"
+        return self.DATABASE_URL
     
     # API Keys
     GOOGLE_API_KEY: str = os.getenv("GOOGLE_API_KEY", "")
