@@ -203,7 +203,8 @@ def save_feedback_items_to_db(
     Save feedback via NestJS internal API using SaveFeedbackDto schema only.
     Payload must contain DTO fields: interviewTestId, items, strengths, duration,
     areasOfImprovements, interactionLogs, interactionStatusLogs, telemetryData.
-    ``telemetryData`` matches the video telemetry score JSON (timeline, presence, speech, environment, etc.).
+    ``telemetryData`` matches the video telemetry score JSON (timeline, presence, speech, environment,
+    hire_probability, action_plan, ``fillerWords`` from interviewee transcript, etc.).
     user_email/session_id/user_id may optionally be forwarded if the Nest endpoint accepts them.
     """
     payload: Dict[str, Any] = {

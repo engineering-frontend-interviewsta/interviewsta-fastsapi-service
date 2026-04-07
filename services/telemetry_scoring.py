@@ -121,11 +121,35 @@ class AudioEnv(EnvironmentItem):
     echo_detected:        bool
     external_event_count: int
 
+
+class MicrophoneEnv(EnvironmentItem):
+    """
+    Input device judgment (built-in vs headset vs external), separate from ambient ``audio`` / noise.
+    Client: top-level ``microphone`` on each sample or nested ``audio.microphone``; optional ``environment.microphone``.
+    """
+
+    device_kind: Optional[str] = None  # "built_in" | "headset" | "external_mic" | "other"
+    suggestion: Optional[str] = None
+    has_client_snapshot: bool = False
+
+
+class AttireEnv(EnvironmentItem):
+    """On-camera clothing / torso capture from client ``environment.attire``."""
+
+    color_class: Optional[str] = None
+    brightness_value: Optional[float] = None
+    moire_risk: bool = False
+    suggestion: Optional[str] = None
+    has_client_snapshot: bool = False
+
+
 class EnvironmentReport(BaseModel):
     lighting:     LightingEnv
     camera:       CameraEnv
     background:   BackgroundEnv
     audio:        AudioEnv
+    microphone:   MicrophoneEnv
+    attire:       AttireEnv
     overall_score: float
     critical_issues: list[str]
     suggestions:     list[str]
@@ -205,7 +229,7 @@ class ActionItem(BaseModel):
     rank:     int
     title:    str
     detail:   str
-    urgency:  str              # "today" | "this_week" | "two_weeks"
+    urgency:  str              # "from_today" | "this_week" | "next_week" | "next_few_weeks" (+ legacy "today", "two_weeks")
     category: str              # "technical" | "presence" | "speech" | "environment"
 
 class ScoredFeedback(BaseModel):
@@ -233,6 +257,245 @@ class VideoTelemetryScoreResult(BaseModel):
     gaps: list[GapItem]
     hire_probability: HireProbability
     action_plan: list[ActionItem]
+
+
+def _extract_attire_dict(
+    environment_once: Optional[Dict[str, Any]], samples: List[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """Prefer one-shot ``environment.attire``; fall back to any sample that still embeds ``environment``."""
+    if environment_once:
+        a = environment_once.get("attire")
+        if isinstance(a, dict) and a:
+            return dict(a)
+    for s in reversed(samples):
+        env = s.get("environment")
+        if isinstance(env, dict):
+            a = env.get("attire")
+            if isinstance(a, dict) and a:
+                return dict(a)
+    return None
+
+
+def _attire_from_client_dict(a: Dict[str, Any]) -> AttireEnv:
+    sc = a.get("score")
+    score_f = float(sc) if isinstance(sc, (int, float)) else 75.0
+    ver = a.get("verdict")
+    verdict = str(ver).strip() if isinstance(ver, str) and str(ver).strip() else "good"
+    iss = a.get("issue")
+    issue = iss.strip() if isinstance(iss, str) and iss.strip() else None
+    sug = a.get("suggestion")
+    suggestion = sug.strip() if isinstance(sug, str) and sug.strip() else None
+    cc = a.get("colorClass")
+    color_class = cc.strip() if isinstance(cc, str) and cc.strip() else None
+    bv = a.get("brightnessValue")
+    brightness_value = float(bv) if isinstance(bv, (int, float)) else None
+    moire_risk = a.get("moireRisk") is True
+    return AttireEnv(
+        score=round(score_f, 1),
+        verdict=verdict,
+        issue=issue,
+        color_class=color_class,
+        brightness_value=brightness_value,
+        moire_risk=moire_risk,
+        suggestion=suggestion,
+        has_client_snapshot=True,
+    )
+
+
+def _default_attire_env() -> AttireEnv:
+    return AttireEnv(
+        score=75.0,
+        verdict="good",
+        issue=None,
+        color_class=None,
+        brightness_value=None,
+        moire_risk=False,
+        suggestion=None,
+        has_client_snapshot=False,
+    )
+
+
+def _attire_dimension_note(a: AttireEnv) -> str:
+    """Human-readable line for feedback when client ``issue`` / ``suggestion`` are empty."""
+    if not a.has_client_snapshot:
+        return "No attire snapshot was captured for this session."
+    if a.issue:
+        return a.issue
+    if a.suggestion:
+        return a.suggestion
+    parts: List[str] = []
+    if a.moire_risk:
+        parts.append(
+            "Moiré risk on clothing — solid colors or more distance from the camera usually help"
+        )
+    if a.color_class:
+        parts.append(f"Palette reads as {a.color_class.replace('_', ' ')}")
+    if a.brightness_value is not None:
+        parts.append(f"torso brightness ~{a.brightness_value:.0f}")
+    if parts:
+        return "; ".join(parts) + "."
+    vlow = (a.verdict or "").lower()
+    if a.score >= 85 or vlow in ("good", "excellent", "strong"):
+        return "Attire reads clearly on camera for this session."
+    if a.verdict and vlow != "good":
+        return a.verdict.capitalize()
+    return "No attire snapshot was captured for this session."
+
+
+def _mic_section_from_sample(s: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    m = s.get("microphone")
+    if isinstance(m, dict) and m:
+        return m
+    aud = s.get("audio")
+    if isinstance(aud, dict):
+        inner = aud.get("microphone")
+        if isinstance(inner, dict) and inner:
+            return inner
+    return None
+
+
+def _infer_microphone_device_kind(m: Dict[str, Any]) -> Optional[str]:
+    raw: Optional[str] = None
+    for key in (
+        "deviceKind",
+        "microphoneType",
+        "inputKind",
+        "micDeviceClass",
+        "sourceType",
+        "type",
+        "kind",
+    ):
+        v = m.get(key)
+        if isinstance(v, str) and v.strip():
+            raw = v.strip().lower()
+            break
+    if raw is None:
+        return None
+    if any(
+        t in raw
+        for t in (
+            "built",
+            "internal",
+            "laptop",
+            "integrated",
+            "default_system",
+            "system_default",
+        )
+    ):
+        return "built_in"
+    if any(
+        t in raw
+        for t in (
+            "headset",
+            "headphone",
+            "headphones",
+            "earbud",
+            "earpods",
+            "airpod",
+            "bluetooth",
+        )
+    ):
+        return "headset"
+    if any(
+        t in raw
+        for t in (
+            "usb",
+            "external",
+            "xm",
+            "snowball",
+            "yeti",
+            "condenser",
+            "dynamic",
+            "interface",
+        )
+    ):
+        return "external_mic"
+    return "other"
+
+
+def _default_microphone_env() -> MicrophoneEnv:
+    return MicrophoneEnv(
+        score=75.0,
+        verdict="good",
+        issue=None,
+        device_kind=None,
+        suggestion=None,
+        has_client_snapshot=False,
+    )
+
+
+def _build_microphone_env(
+    environment_once: Optional[Dict[str, Any]], samples: List[Dict[str, Any]]
+) -> MicrophoneEnv:
+    mic_scores: List[float] = []
+    last_m: Optional[Dict[str, Any]] = None
+    for s in samples:
+        m = _mic_section_from_sample(s)
+        if m:
+            last_m = m
+            sc = m.get("score")
+            if isinstance(sc, (int, float)):
+                mic_scores.append(float(sc))
+    env_mic: Optional[Dict[str, Any]] = None
+    if environment_once:
+        x = environment_once.get("microphone")
+        if isinstance(x, dict) and x:
+            env_mic = x
+    if last_m is None and env_mic is not None:
+        last_m = env_mic
+    if not mic_scores and env_mic is not None:
+        sc0 = env_mic.get("score")
+        if isinstance(sc0, (int, float)):
+            mic_scores.append(float(sc0))
+
+    if last_m is None:
+        return _default_microphone_env()
+
+    score_f = round(_mean(mic_scores), 1) if mic_scores else 75.0
+    if not mic_scores and isinstance(last_m.get("score"), (int, float)):
+        score_f = round(float(last_m["score"]), 1)
+    ver = last_m.get("verdict")
+    verdict = str(ver).strip() if isinstance(ver, str) and str(ver).strip() else "good"
+    iss = last_m.get("issue")
+    issue = iss.strip() if isinstance(iss, str) and iss.strip() else None
+    sug = last_m.get("suggestion")
+    suggestion = sug.strip() if isinstance(sug, str) and sug.strip() else None
+    return MicrophoneEnv(
+        score=float(score_f),
+        verdict=verdict,
+        issue=issue,
+        device_kind=_infer_microphone_device_kind(last_m),
+        suggestion=suggestion,
+        has_client_snapshot=True,
+    )
+
+
+def _microphone_dimension_note(m: MicrophoneEnv) -> str:
+    if not m.has_client_snapshot:
+        return "No microphone profile was captured for this session."
+    if m.issue:
+        return m.issue
+    if m.suggestion:
+        return m.suggestion
+    if m.device_kind == "built_in":
+        return (
+            "Built-in / laptop microphone — interviewers tend to hear more room tone and echo; "
+            "a headset or USB mic is safer for high-stakes rounds."
+        )
+    if m.device_kind == "headset":
+        return (
+            "Headset or on-ear style input — typically clearer and more isolated than a built-in mic."
+        )
+    if m.device_kind == "external_mic":
+        return (
+            "External / USB-style microphone — strong choice for interview voice clarity."
+        )
+    vlow = (m.verdict or "").lower()
+    if m.score >= 85 or vlow in ("good", "excellent", "strong"):
+        return "Microphone capture looks solid for this session."
+    if m.verdict and vlow != "good":
+        return m.verdict.capitalize()
+    return "Microphone input recorded; consider tagging device type (built-in vs headset) for sharper tips."
 
 
 # ─── Scoring engine ───────────────────────────────────────────────────────────
@@ -400,6 +663,7 @@ class ScoringEngine:
         analysis: FullAnalysisReport,
         timeline: list[dict[str, Any]],
         session_duration_minutes: float,
+        feedback_overall_score_pct: Optional[float] = None,
     ) -> VideoTelemetryScoreResult:
         """
         Presence + speech + environment only (technical rubric omitted).
@@ -422,7 +686,11 @@ class ScoringEngine:
             [], presence_dims, speech_dim, analysis.environment
         )
         hire = self._compute_hire_probability_soft_only(
-            presence_avg, speech_dim.score, analysis.environment.overall_score, gaps
+            presence_avg,
+            speech_dim.score,
+            analysis.environment.overall_score,
+            gaps,
+            feedback_overall_score_pct=feedback_overall_score_pct,
         )
         action_plan = self._build_action_plan_video_telemetry(
             presence_dims, speech_dim, analysis.environment
@@ -687,6 +955,21 @@ class ScoringEngine:
             {"label": "Camera angle",     "score": env.camera.score,      "verdict": env.camera.verdict,      "note": env.camera.issue     or "Good"},
             {"label": "Background",       "score": env.background.score,  "verdict": env.background.verdict,  "note": env.background.issue or "Good"},
             {"label": "Background noise", "score": env.audio.score,       "verdict": env.audio.verdict,       "note": env.audio.issue      or "Good"},
+            {
+                "label": "Microphone",
+                "score": env.microphone.score,
+                "verdict": env.microphone.verdict,
+                "note": _microphone_dimension_note(env.microphone),
+                "deviceKind": env.microphone.device_kind
+                if env.microphone.has_client_snapshot
+                else None,
+            },
+            {
+                "label": "Attire",
+                "score": env.attire.score,
+                "verdict": env.attire.verdict,
+                "note": _attire_dimension_note(env.attire),
+            },
         ]
         return EnvironmentDimension(
             items=items,
@@ -808,11 +1091,22 @@ class ScoringEngine:
         speech_score: float,
         env_score: float,
         gaps: list[GapItem],
+        feedback_overall_score_pct: Optional[float] = None,
     ) -> HireProbability:
         """Hire-style score from presence, speech, and environment only (no technical rubric)."""
         blend = presence_avg * 0.45 + speech_score * 0.35 + env_score * 0.20
         raw_prob = 28.0 + (blend - 50.0) * 0.85
-        probability = max(5.0, min(94.0, raw_prob))
+        p_video = max(5.0, min(94.0, raw_prob))
+
+        if feedback_overall_score_pct is not None:
+            fb = max(0.0, min(100.0, float(feedback_overall_score_pct)))
+            if fb <= 0.0:
+                probability = 0.0
+            else:
+                probability = round(0.45 * p_video + 0.55 * fb, 1)
+                probability = max(0.0, min(94.0, probability))
+        else:
+            probability = p_video
 
         impact_items: list[HireImpactItem] = []
         high_gaps = [g for g in gaps if g.impact == "high"]
@@ -825,26 +1119,42 @@ class ScoringEngine:
                 )
             )
 
-        if probability >= 70:
+        if feedback_overall_score_pct is not None and float(feedback_overall_score_pct) <= 0.0:
+            verdict = "Overall interview score from the feedback model is 0% — hire probability is set to 0."
+            narrative = (
+                "The structured feedback rubric returned a 0% overall score, so hire probability is 0. "
+                "Focus on the action plan and metric-level feedback before the next attempt."
+            )
+        elif probability >= 70:
             verdict = "Strong on-camera presence and delivery for this session."
+            narrative = self._hire_narrative_soft(probability, high_gaps)
         elif probability >= 50:
             verdict = "Mixed signals — a few targeted improvements would sharpen the impression."
+            narrative = self._hire_narrative_soft(probability, high_gaps)
         elif probability >= 35:
             verdict = "Several soft-skill gaps visible on the recording."
+            narrative = self._hire_narrative_soft(probability, high_gaps)
         else:
             verdict = "Significant room to improve environment, presence, and speech clarity."
+            narrative = self._hire_narrative_soft(probability, high_gaps)
 
-        narrative = self._hire_narrative_soft(probability, high_gaps)
+        breakdown: dict[str, float] = {
+            "presence": round(presence_avg, 1),
+            "speech": round(speech_score, 1),
+            "environment": round(env_score, 1),
+        }
+        if feedback_overall_score_pct is not None:
+            breakdown["feedbackOverall"] = round(
+                max(0.0, min(100.0, float(feedback_overall_score_pct))), 1
+            )
+        if feedback_overall_score_pct is not None:
+            breakdown["videoTelemetryOnly"] = round(p_video, 1)
 
         return HireProbability(
             probability=round(probability, 1),
             verdict=verdict,
             narrative=narrative,
-            breakdown={
-                "presence": round(presence_avg, 1),
-                "speech": round(speech_score, 1),
-                "environment": round(env_score, 1),
-            },
+            breakdown=breakdown,
             impact_items=impact_items,
         )
 
@@ -897,7 +1207,7 @@ class ScoringEngine:
         for issue in env.critical_issues[:2]:
             items.append(ActionItem(
                 rank=rank, title="Fix your environment setup", detail=issue,
-                urgency="today", category="environment",
+                urgency="from_today", category="environment",
             ))
             rank += 1
 
@@ -908,7 +1218,7 @@ class ScoringEngine:
             rank=rank,
             title=f"Drill {worst_metric.name.lower()} — 30 min/day for 2 weeks",
             detail=worst_metric.note,
-            urgency="today",
+            urgency="from_today",
             category="technical",
         ))
         rank += 1
@@ -954,7 +1264,7 @@ class ScoringEngine:
             rank=rank,
             title="Complete Blind 75 DP + Graph subset",
             detail="Dynamic programming and graph traversal are the two highest-variance areas in FAANG coding rounds. Dedicate 2–3 weeks to this subset specifically.",
-            urgency="two_weeks",
+            urgency="next_few_weeks",
             category="technical",
         ))
 
@@ -976,7 +1286,7 @@ class ScoringEngine:
                     rank=rank,
                     title="Fix your environment setup",
                     detail=issue,
-                    urgency="today",
+                    urgency="from_today",
                     category="environment",
                 )
             )
@@ -1025,7 +1335,7 @@ class ScoringEngine:
                 rank=rank,
                 title="Re-run a 10-minute dry run with telemetry on",
                 detail="Use the same desk, mic, and lighting as interview day; review timeline deltas for touches and stress.",
-                urgency="this_week",
+                urgency="next_week",
                 category="presence",
             )
         )
@@ -1097,6 +1407,191 @@ def _safe_int(v: Any) -> int:
     return 0
 
 
+def _speech_curr_interval_segment_fields(
+    sp: Dict[str, Any],
+) -> Tuple[int, List[Any], List[Any]]:
+    """
+    Per-interval segment aggregates from the client ``speech`` object (camelCase or snake_case).
+    """
+    raw_count = sp.get("currIntSegmentCounts")
+    if raw_count is None:
+        raw_count = sp.get("curr_int_segment_counts")
+    if raw_count is None:
+        raw_count = sp.get("currIntSegmentCount")
+    if raw_count is None:
+        raw_count = sp.get("curr_int_segment_count")
+    counts = _safe_int(raw_count) if raw_count is not None else 0
+
+    words = sp.get("currIntSegmentWords")
+    if words is None:
+        words = sp.get("curr_int_segment_words")
+    if not isinstance(words, list):
+        words = []
+
+    wpm_raw = sp.get("currIntSegmentWpm")
+    if wpm_raw is None:
+        wpm_raw = sp.get("curr_int_segment_wpm")
+    if not isinstance(wpm_raw, list):
+        wpm_raw = []
+
+    return counts, words, wpm_raw
+
+
+def _numeric_wpm_values(wpm_list: List[Any]) -> List[float]:
+    out: List[float] = []
+    for x in wpm_list:
+        if isinstance(x, bool):
+            continue
+        if isinstance(x, (int, float)):
+            out.append(float(x))
+        else:
+            try:
+                out.append(float(x))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def _coerce_curr_segment_wpm_json(wpm_raw: List[Any]) -> List[Any]:
+    """Normalize segment WPM list for JSON output (floats for numeric entries)."""
+    out: List[Any] = []
+    for x in wpm_raw:
+        if isinstance(x, bool):
+            out.append(x)
+        elif isinstance(x, (int, float)):
+            out.append(float(x))
+        else:
+            out.append(x)
+    return out
+
+
+def _infer_timeline_interval_issues(
+    *,
+    dead_delta: int,
+    stress_delta: int,
+    face_delta: int,
+    hair_delta: int,
+    brow_val: Optional[float],
+    lip_val: Optional[float],
+    current_wpm: Any,
+    wpm_segments: List[float],
+) -> List[Dict[str, Any]]:
+    """
+    Interval-level issues aligned with session speech/presence heuristics (pace band, pauses, stress, fidgets).
+    """
+    issues: List[Dict[str, Any]] = []
+
+    wpm_candidates = [w for w in wpm_segments if w > 1e-6]
+    if not wpm_candidates and isinstance(current_wpm, (int, float)) and not isinstance(
+        current_wpm, bool
+    ):
+        wpm_candidates = [float(current_wpm)]
+
+    if wpm_candidates:
+        lo, hi = min(wpm_candidates), max(wpm_candidates)
+        if hi > 160:
+            issues.append(
+                {
+                    "category": "speech",
+                    "title": "Speaking pace — fast",
+                    "detail": (
+                        f"Peak pace around {hi:.0f} wpm in this window "
+                        f"(target ~120–160 wpm for clarity)."
+                    ),
+                    "impact": "medium",
+                }
+            )
+        if lo < 120:
+            issues.append(
+                {
+                    "category": "speech",
+                    "title": "Speaking pace — slow",
+                    "detail": (
+                        f"Pace near {lo:.0f} wpm — aim closer to 120–160 wpm "
+                        f"so answers stay engaging."
+                    ),
+                    "impact": "low",
+                }
+            )
+        if len(wpm_candidates) >= 2 and (hi - lo) >= 50:
+            issues.append(
+                {
+                    "category": "speech",
+                    "title": "Uneven pace across segments",
+                    "detail": (
+                        "Large swing in words-per-minute between segments; "
+                        "steadier delivery reads as more confident."
+                    ),
+                    "impact": "low",
+                }
+            )
+
+    if dead_delta >= 1:
+        issues.append(
+            {
+                "category": "speech",
+                "title": "Dead silence / long pauses",
+                "detail": (
+                    f"{dead_delta} long pause(s) in this window — "
+                    "briefly narrate your thinking to avoid extended silence."
+                ),
+                "impact": "high" if dead_delta >= 2 else "medium",
+            }
+        )
+
+    if stress_delta >= 1:
+        issues.append(
+            {
+                "category": "stress",
+                "title": "Stress indicators",
+                "detail": (
+                    "Elevated stress signals in this interval — short breathing "
+                    "resets often help composure."
+                ),
+                "impact": "medium",
+            }
+        )
+
+    touch_total = face_delta + hair_delta
+    if touch_total >= 1:
+        issues.append(
+            {
+                "category": "presence",
+                "title": "Face / hair touching",
+                "detail": (
+                    "Visible self-touching detected — resting hands on desk or lap "
+                    "reduces nervous cues."
+                ),
+                "impact": "low" if touch_total < 3 else "medium",
+            }
+        )
+
+    if brow_val is not None and brow_val >= 0.55:
+        issues.append(
+            {
+                "category": "stress",
+                "title": "Raised brow tension",
+                "detail": (
+                    "Raised brow can read as tension — relax forehead between phrases."
+                ),
+                "impact": "low",
+            }
+        )
+    if lip_val is not None and lip_val >= 0.55:
+        issues.append(
+            {
+                "category": "stress",
+                "title": "Lip compression",
+                "detail": (
+                    "Lip compression often signals stress — soften jaw between sentences."
+                ),
+                "impact": "low",
+            }
+        )
+
+    return issues
+
+
 def build_telemetry_timeline(samples: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
     One entry per stored sample (e.g. each ~20s POST). Cumulative counters are differenced
@@ -1154,17 +1649,57 @@ def build_telemetry_timeline(samples: List[Dict[str, Any]]) -> List[Dict[str, An
         seg_count = sp.get("segmentCount")
         tw = sp.get("totalWords")
         wpm = sp.get("currentWpm")
+        if wpm is None:
+            wpm = sp.get("currentWPM")
+        filler_raw = sp.get("fillerCount")
+        if filler_raw is None:
+            filler_raw = sp.get("filler_count")
+        if isinstance(filler_raw, (int, float)) and not isinstance(filler_raw, bool):
+            filler_count_val: Any = _safe_int(filler_raw)
+        else:
+            filler_count_val = filler_raw
+        if isinstance(wpm, (int, float)) and not isinstance(wpm, bool):
+            wpm_val: Any = float(wpm)
+        else:
+            wpm_val = wpm
+
+        curr_seg_counts, curr_seg_words, curr_seg_wpm_raw = _speech_curr_interval_segment_fields(
+            sp
+        )
+        curr_seg_wpm_json = _coerce_curr_segment_wpm_json(curr_seg_wpm_raw)
+        wpm_seg_numeric = _numeric_wpm_values(curr_seg_wpm_raw)
+
+        interval_issues = _infer_timeline_interval_issues(
+            dead_delta=dead_delta,
+            stress_delta=stress_delta,
+            face_delta=face_delta,
+            hair_delta=hair_delta,
+            brow_val=brow_val,
+            lip_val=lip_val,
+            current_wpm=wpm_val,
+            wpm_segments=wpm_seg_numeric,
+        )
+
+        speech_out: Dict[str, Any] = dict(sp)
+        speech_out.update(
+            {
+                "segmentCount": seg_count,
+                "totalWords": tw,
+                "fillerCount": filler_count_val,
+                "currentWpm": wpm_val,
+                "currentWPM": wpm_val,
+                "deadPauses": dead_delta,
+                "currIntSegmentCounts": curr_seg_counts,
+                "currIntSegmentWords": curr_seg_words,
+                "currIntSegmentWpm": curr_seg_wpm_json,
+            }
+        )
 
         timeline.append(
             {
                 "time": sample.get("time"),
                 "duration": _duration_seconds(sample),
-                "speech": {
-                    "segmentCount": seg_count,
-                    "totalWords": tw,
-                    "currentWpm": float(wpm) if isinstance(wpm, (int, float)) else wpm,
-                    "deadPauses": dead_delta,
-                },
+                "speech": speech_out,
                 "faceTouchDelta": face_delta,
                 "hairTouchDelta": hair_delta,
                 "stressEventsDelta": stress_delta,
@@ -1172,6 +1707,7 @@ def build_telemetry_timeline(samples: List[Dict[str, Any]]) -> List[Dict[str, An
                     "browRaise": brow_val,
                     "lipCompression": lip_val,
                 },
+                "verdicts": {"issues": interval_issues},
             }
         )
 
@@ -1438,6 +1974,20 @@ def build_full_analysis_from_telemetry(
         if isinstance(ec, int):
             ext_events += ec
 
+    microphone_env = _build_microphone_env(environment_once, samples)
+
+    attire_raw = _extract_attire_dict(environment_once, samples)
+    attire_env = (
+        _attire_from_client_dict(attire_raw)
+        if attire_raw is not None
+        else _default_attire_env()
+    )
+    env_dim_scores = [lt, cs, bs, aus]
+    if microphone_env.has_client_snapshot:
+        env_dim_scores.append(microphone_env.score)
+    if attire_raw is not None:
+        env_dim_scores.append(attire_env.score)
+
     env_report = EnvironmentReport(
         lighting=LightingEnv(
             score=round(lt, 1),
@@ -1469,7 +2019,9 @@ def build_full_analysis_from_telemetry(
             echo_detected=echo_any,
             external_event_count=ext_events,
         ),
-        overall_score=round(_mean([lt, cs, bs, aus]), 1),
+        microphone=microphone_env,
+        attire=attire_env,
+        overall_score=round(_mean(env_dim_scores), 1),
         critical_issues=[],
         suggestions=[],
     )
@@ -1486,8 +2038,32 @@ def build_full_analysis_from_telemetry(
         if isinstance(ei, str) and ei.strip() and ei not in crit:
             crit.append(ei)
         sug = environment_once.get("suggestion")
-        if isinstance(sug, str) and sug.strip():
+        if isinstance(sug, str) and sug.strip() and sug not in env_report.suggestions:
             env_report.suggestions.append(sug)
+        att = environment_once.get("attire")
+        if isinstance(att, dict):
+            ai = att.get("issue")
+            if isinstance(ai, str) and ai.strip() and ai not in crit:
+                crit.append(ai.strip())
+            asug = att.get("suggestion")
+            if (
+                isinstance(asug, str)
+                and asug.strip()
+                and asug.strip() not in env_report.suggestions
+            ):
+                env_report.suggestions.append(asug.strip())
+        mic_e = environment_once.get("microphone")
+        if isinstance(mic_e, dict):
+            mi = mic_e.get("issue")
+            if isinstance(mi, str) and mi.strip() and mi.strip() not in crit:
+                crit.append(mi.strip())
+            msug = mic_e.get("suggestion")
+            if (
+                isinstance(msug, str)
+                and msug.strip()
+                and msug.strip() not in env_report.suggestions
+            ):
+                env_report.suggestions.append(msug.strip())
     for s in samples:
         su = s.get("suggestions")
         if isinstance(su, list):
@@ -1511,16 +2087,60 @@ def build_full_analysis_from_telemetry(
     )
 
 
+def _merge_action_plan_with_llm_extensions(
+    base_plan: list[dict[str, Any]],
+    llm_items: list[dict[str, Any]],
+    *,
+    max_total: int = 12,
+) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
+    rank = 1
+    seen = {str(x.get("title", "")).lower().strip() for x in base_plan if x.get("title")}
+    for item in base_plan:
+        row = dict(item)
+        row["rank"] = rank
+        merged.append(row)
+        rank += 1
+    for it in llm_items:
+        t = str(it.get("title", "")).lower().strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        merged.append(
+            {
+                "rank": rank,
+                "title": it.get("title", ""),
+                "detail": it.get("detail", ""),
+                "urgency": it.get("urgency", "this_week"),
+                "category": it.get("category", "presence"),
+            }
+        )
+        rank += 1
+        if len(merged) >= max_total:
+            break
+    return merged
+
+
 def compute_video_telemetry_score_payload(
     redis_client: Any,
     session_id: str,
     session_duration_minutes: float,
+    *,
+    feedback_overall_score_pct: Optional[float] = None,
+    candidate_transcript: Optional[str] = None,
+    google_api_key: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     """
-    Build the same JSON as logged at interview end (``VideoTelemetryScoreResult``).
-    Returns ``None`` if there is no telemetry in Redis or scoring fails.
+    Build the same JSON as logged at interview end (``VideoTelemetryScoreResult``), plus:
+
+    - ``fillerWords``: top filler tokens from ``candidate_transcript`` (interviewee only).
+    - ``action_plan``: rule-based items plus LLM extensions (when ``google_api_key`` set).
+    - Hire probability blends in ``feedback_overall_score_pct`` (0–100); 0% feedback forces 0% hire.
     """
     try:
+        from services.filler_words import top_filler_words_from_transcript
+        from services.telemetry_action_plan_llm import extend_video_telemetry_action_plan_llm
+
         env_once, samples = fetch_interview_telemetry_from_redis(redis_client, session_id)
         if not samples and env_once is None:
             return None
@@ -1536,8 +2156,48 @@ def compute_video_telemetry_score_payload(
             analysis=analysis,
             timeline=timeline,
             session_duration_minutes=dur,
+            feedback_overall_score_pct=feedback_overall_score_pct,
         )
-        return result.model_dump(mode="json")
+        out = result.model_dump(mode="json")
+        out["fillerWords"] = top_filler_words_from_transcript(
+            candidate_transcript or "", max_items=5
+        )
+
+        base_plan = list(out.get("action_plan") or [])
+        gaps_list = out.get("gaps") or []
+        gaps_txt = "\n".join(
+            f"- {g.get('title', '')}: {g.get('detail', '')}" for g in gaps_list[:8]
+        )
+        soft_parts: list[str] = []
+        for pd in out.get("presence_dimensions") or []:
+            if isinstance(pd, dict):
+                soft_parts.append(
+                    f"{pd.get('name', '')}: {(pd.get('narrative') or '')[:240]}"
+                )
+        sd = out.get("speech_dimension")
+        if isinstance(sd, dict):
+            soft_parts.append(f"Speech: {(sd.get('narrative') or '')[:360]}")
+        env_dim = out.get("environment_dimension")
+        if isinstance(env_dim, dict):
+            for it in env_dim.get("items") or []:
+                if isinstance(it, dict):
+                    soft_parts.append(
+                        f"{it.get('label', '')}: {it.get('note', '')}"
+                    )
+        soft_summary = "\n".join(soft_parts)[:4500]
+
+        llm_extra: list[dict[str, Any]] = []
+        if google_api_key:
+            llm_extra = extend_video_telemetry_action_plan_llm(
+                existing_plan=base_plan,
+                gaps_text=gaps_txt,
+                soft_summary=soft_summary,
+                google_api_key=google_api_key,
+            )
+        out["action_plan"] = _merge_action_plan_with_llm_extensions(
+            base_plan, llm_extra, max_total=12
+        )
+        return out
     except Exception:
         logger.exception(
             "compute_video_telemetry_score_payload failed for session=%s", session_id

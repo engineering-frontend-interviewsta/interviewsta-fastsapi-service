@@ -112,6 +112,7 @@ def _run_unified_feedback_pipeline(
     from workflows.feedback.service import run_feedback_pipeline, get_feedback_item
     from services.drf_client import save_feedback_items_to_db
     from services.telemetry_scoring import compute_video_telemetry_score_payload
+    from services.feedback_overall_score import sleeve_scores_to_overall_pct
 
     if not get_feedback_item(feedback_item_id):
         raise ValueError(f"Unknown feedback_item_id: {feedback_item_id}")
@@ -131,6 +132,9 @@ def _run_unified_feedback_pipeline(
     interaction_status_logs = [{"status": x.get("status"), "comment": x.get("comment")} for x in interaction_feedback]
     history_ckpt, messages = get_interaction_history_from_redis(session_id)
     interaction_logs = extract_qa_pairs(messages)[1:] if messages else []
+    candidate_transcript = (
+        get_candidate_transcript_from_messages(messages) if messages else ""
+    )
 
     interview_test_id = (session or {}).get("interview_test_id")
     if interview_test_id is None and session:
@@ -140,10 +144,16 @@ def _run_unified_feedback_pipeline(
     duration_seconds = session.get("duration", 0) if session else 0
     dur_sec = int(duration_seconds) if duration_seconds else 0
     session_duration_minutes = float(dur_sec) / 60.0 if dur_sec else 1.0
-    telemetry_data = compute_video_telemetry_score_payload(
-        redis_client, session_id, session_duration_minutes
-    )
     items = pipeline_result.get("sleeve_scores") or {}
+    feedback_overall_pct = sleeve_scores_to_overall_pct(items)
+    telemetry_data = compute_video_telemetry_score_payload(
+        redis_client,
+        session_id,
+        session_duration_minutes,
+        feedback_overall_score_pct=feedback_overall_pct,
+        candidate_transcript=candidate_transcript,
+        google_api_key=google_key,
+    )
 
     save_feedback_items_to_db(
         user_email=user_email,

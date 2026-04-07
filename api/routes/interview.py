@@ -63,6 +63,43 @@ PENDING_START_TASK_TTL_SEC = 900
 VIDEO_TELEMETRY_SAMPLES_TTL_SEC = 3600
 VIDEO_TELEMETRY_MAX_SAMPLES = 500
 
+# Speech metrics must live under ``speech`` for Redis samples / scoring. Browsers often send
+# these at the JSON root (allowed by ``InterviewVideoTelemetrySample.extra``); merge before store.
+_SPEECH_TELEMETRY_FIELD_KEYS = frozenset(
+    {
+        "clipping",
+        "currIntSegmentCounts",
+        "currIntSegmentWords",
+        "currIntSegmentWpm",
+        "currentWpm",
+        "currentWPM",
+        "fillerCount",
+        "filler_count",
+        "latestSegmentText",
+        "noiseFloorDb",
+        "rmsDb",
+        "segmentCount",
+        "snrDb",
+        "speakingTimeMs",
+        "totalWords",
+        "webSpeechActive",
+        "deadPauseCount",
+        "deadPauses",
+    }
+)
+
+
+def _merge_root_speech_fields_into_nested(stored: Dict[str, Any]) -> None:
+    base = stored.get("speech")
+    nested: Dict[str, Any] = dict(base) if isinstance(base, dict) else {}
+    for k in list(stored.keys()):
+        if k in _SPEECH_TELEMETRY_FIELD_KEYS:
+            v = stored.pop(k, None)
+            if k not in nested:
+                nested[k] = v
+    if nested:
+        stored["speech"] = nested
+
 
 def _video_telemetry_samples_key(session_id: str) -> str:
     return f"session:{session_id}:video_telemetry_samples"
@@ -763,14 +800,19 @@ async def post_video_telemetry(
     Append one telemetry sample for the session (client typically POSTs every ~20s).
 
     Body: nested JSON with camelCase keys (``time``, ``duration``, ``environment``, ``audio``,
-    ``background``, ``camera``, ``lighting``, ``presence``, ``speech``, ``overallScore``,
-    ``suggestions``, ``criticalIssues``, …). Nested objects may be null or partial.
+    ``background``, ``camera``, ``lighting``, ``presence``, ``speech``, ``microphone``,
+    ``overallScore``, ``suggestions``, ``criticalIssues``, …). Nested objects may be null or partial.
+    Optional ``microphone`` (or ``audio.microphone``) carries input-device judgment vs ambient noise.
 
     ``environment`` is stored **once** (first non-null value wins, ``SET NX``); it is **not**
-    repeated on each interval. Per-tick fields (lighting, camera, presence, speech, …) are
+    repeated on each interval.     Per-tick fields (lighting, camera, presence, speech, …) are
     appended to Redis list ``session:{session_id}:video_telemetry_samples`` (newest first),
     **without** the ``environment`` key, trimmed to ``VIDEO_TELEMETRY_MAX_SAMPLES``, TTL
     ``VIDEO_TELEMETRY_SAMPLES_TTL_SEC``.
+
+    Speech counters (``segmentCount``, ``totalWords``, ``currentWpm``, …) are stored verbatim;
+    the API does not infer them from ``webSpeechActive``. Root-level speech keys are merged
+    into ``speech`` so scoring and timeline see a single nested object.
     """
     try:
         session_manager = InterviewSessionManager(redis_client)
@@ -782,6 +824,7 @@ async def post_video_telemetry(
             )
 
         stored = payload.model_dump(mode="json", by_alias=True, exclude_none=False)
+        _merge_root_speech_fields_into_nested(stored)
         env_val = stored.get("environment")
         if env_val is not None:
             env_key = _video_telemetry_environment_key(session_id)
