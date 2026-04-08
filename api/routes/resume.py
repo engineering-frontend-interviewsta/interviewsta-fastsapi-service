@@ -25,6 +25,7 @@ router = APIRouter()
 async def analyze_resume(
     resume: UploadFile = File(...),
     job_description: UploadFile = File(...),
+    session_id: Optional[str] = Form(None),
     user_info: dict = Depends(get_current_user),
     redis_client: Redis = Depends(get_redis)
 ):
@@ -82,9 +83,9 @@ async def analyze_resume(
         resume_b64 = base64.b64encode(resume_bytes).decode("utf-8")
         job_desc_b64 = base64.b64encode(job_desc_bytes).decode("utf-8")
         
-        # Generate session_id for tracking (matching old behavior)
+        # Use caller-provided session_id if present, otherwise generate one
         import uuid
-        session_id = str(uuid.uuid4())
+        session_id = session_id or str(uuid.uuid4())
         
         # Queue analysis task
         task = process_resume_upload.apply_async(

@@ -283,20 +283,21 @@ Please analyze this resume against the job description.
         # import json
         # redis_client.setex(redis_key, 3600, json.dumps(analysis_result))
         
-        # Save to Django database
+        # Save to Nest internal API + Redis (full dict is always built; POST may fail without breaking the task)
         analysis_result = None
         try:
             from services.drf_client import save_resume_analysis_to_db
+
             analysis_result = save_resume_analysis_to_db(
                 user_email=user_email,
                 session_id=session_id,
-                analysis_result=result
+                analysis_result=result,
+                resume_filename=resume_filename,
             )
-            overall_score = sum([i["score"] for i in analysis_result["sections"]]) / len(analysis_result["sections"])
-            analysis_result["overall_score"] = overall_score
-            logger.info(f"Resume analysis saved to Django database for session {session_id}")
+            logger.info(f"Resume analysis persisted for session {session_id}")
             logger.info(f"Resume analysis result: {analysis_result}")
             import json
+
             redis_client.setex(redis_key, 3600, json.dumps(analysis_result))
             # if analysis_result:
             #     logger.info(f"Resume analysis saved to Django database for session {session_id}")
@@ -304,6 +305,17 @@ Please analyze this resume against the job description.
             #     logger.warning(f"Failed to save resume analysis to Django database for session {session_id}")
         except Exception as e:
             logger.error(f"Error saving to Django database: {e}", exc_info=True)
+            if analysis_result is None:
+                try:
+                    from services.drf_client import build_resume_analysis_result_dict
+                    import json
+
+                    analysis_result = build_resume_analysis_result_dict(
+                        session_id, resume_filename, result
+                    )
+                    redis_client.setex(redis_key, 3600, json.dumps(analysis_result))
+                except Exception as e2:
+                    logger.error(f"Fallback resume result build failed: {e2}", exc_info=True)
             # Don't fail the task if DB save fails, Redis storage is sufficient for immediate access
         
         # Update progress
