@@ -192,6 +192,7 @@ def _run_unified_feedback_pipeline(
     redis_client: Redis,
     feedback_item_id: str,
     google_key: str,
+    is_free_interview: bool = False,
 ) -> Dict[str, Any]:
     """Run the unified feedback pipeline (feedback_items.json + service.py) and save to DB + Redis."""
     from workflows.feedback.service import run_feedback_pipeline, get_feedback_item
@@ -241,6 +242,7 @@ def _run_unified_feedback_pipeline(
         grammar_score=language_metrics["grammarScore"],
         communication_metrics=language_metrics["communicationMetrics"],
         grammar_metrics=language_metrics["grammarMetrics"],
+        is_free_interview=is_free_interview,
     )
     feedback = {
         "items": items,
@@ -282,6 +284,10 @@ def generate_feedback(self, session_id: str, history: str, user_email: str) -> D
         if not get_feedback_item(feedback_item_id):
             return {"status": "error", "error": f"Unknown feedback_item_id: {feedback_item_id}", "feedback": None}
 
+        # Extract is_free_interview from session payload (stored at interview start)
+        session_payload = (session or {}).get("payload") or {}
+        is_free_interview = bool(session_payload.get("is_free_interview", False))
+
         return _run_unified_feedback_pipeline(
             session_id=session_id,
             history=history,
@@ -290,6 +296,7 @@ def generate_feedback(self, session_id: str, history: str, user_email: str) -> D
             redis_client=self.redis_client,
             feedback_item_id=feedback_item_id,
             google_key=google_key,
+            is_free_interview=is_free_interview,
         )
     except Exception as e:
         logger.error(f"Error generating feedback for session {session_id}: {e}", exc_info=True)

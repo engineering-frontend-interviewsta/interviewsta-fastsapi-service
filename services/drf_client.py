@@ -201,6 +201,7 @@ def save_feedback_items_to_db(
     grammar_score: Optional[float] = None,
     communication_metrics: Optional[Dict[str, Any]] = None,
     grammar_metrics: Optional[Dict[str, Any]] = None,
+    is_free_interview: bool = False,
 ) -> bool:
     """
     Save feedback via NestJS internal API using SaveFeedbackDto schema only.
@@ -233,6 +234,7 @@ def save_feedback_items_to_db(
         payload["communicationMetrics"] = communication_metrics
     if grammar_metrics is not None:
         payload["grammarMetrics"] = grammar_metrics
+    payload["isFreeInterview"] = is_free_interview
     path = "/interview-feedback/"
     full_url = f"{_drf_base_url()}{path}"
     logger.warning(

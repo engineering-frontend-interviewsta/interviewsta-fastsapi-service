@@ -366,12 +366,13 @@ async def start_interview(
                 detail="user_id could not be resolved from Bearer token (sub/uid/email)",
             )
         logger.info(f"Starting {interview_type} interview for user {user_info.get('email')}")
-        # Merge feedback_item_id and interview_test_id from X-Interview-Access-Token into payload
+        # Merge feedback_item_id, interview_test_id, and is_free_interview from X-Interview-Access-Token into payload
         payload = dict(request.payload or {})
         if getattr(interview_access, "feedback_item_id", None):
             payload["feedback_item_id"] = interview_access.feedback_item_id
         if getattr(interview_access, "interview_test_id", None) is not None:
             payload["interview_test_id"] = interview_access.interview_test_id
+        payload["is_free_interview"] = bool(getattr(interview_access, "is_free_interview", False))
         task = process_interview_start.apply_async(
             args=[request.session_id, interview_type, user_id, payload],
             queue="interview",
