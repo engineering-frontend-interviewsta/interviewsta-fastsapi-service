@@ -24,10 +24,11 @@ class InterviewAccessTokenPayload(BaseModel):
     sub: str  # userId
     interview_test_id: str = Field(..., alias="interviewTestId")
     title: str
-    credits: int = 1
+    credits: int = 2
     duration: Optional[int] = None  # e.g. minutes
     fastapi_interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate", "AIML"]] = Field(None, alias="fastapiInterviewType")
     feedback_item_id: Optional[str] = Field(None, alias="feedbackItemId")  # e.g. "fi-coding-i"; used for feedback pipeline and DRF SaveFeedbackDto
+    is_free_interview: bool = Field(False, alias="isFreeInterview")
 
     class Config:
         populate_by_name = True
