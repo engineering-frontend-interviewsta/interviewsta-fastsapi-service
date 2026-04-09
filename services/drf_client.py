@@ -23,6 +23,11 @@ def _drf_headers() -> Dict[str, str]:
     api_key = os.getenv("DRF_INTERNAL_API_KEY", "")
     if api_key:
         headers["X-Internal-API-Key"] = api_key
+    else:
+        logger.warning(
+            "DRF_INTERNAL_API_KEY is unset; Nest internal POSTs will get 401. "
+            "Set it to the same value as INTERNAL_API_KEY in interviewsta-backend/.env"
+        )
     return headers
 
 def _post(path: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
