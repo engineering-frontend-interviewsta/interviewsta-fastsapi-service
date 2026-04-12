@@ -15,6 +15,7 @@ INTERVIEW_TYPES: Tuple[str, ...] = (
     "Communication",
     "Role-Based Interview",
     "Debate",
+    "AIML",
 )
 
 
@@ -23,10 +24,11 @@ class InterviewAccessTokenPayload(BaseModel):
     sub: str  # userId
     interview_test_id: str = Field(..., alias="interviewTestId")
     title: str
-    credits: int = 1
+    credits: int = 2
     duration: Optional[int] = None  # e.g. minutes
-    fastapi_interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate"]] = Field(None, alias="fastapiInterviewType")
+    fastapi_interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate", "AIML"]] = Field(None, alias="fastapiInterviewType")
     feedback_item_id: Optional[str] = Field(None, alias="feedbackItemId")  # e.g. "fi-coding-i"; used for feedback pipeline and DRF SaveFeedbackDto
+    is_free_interview: bool = Field(False, alias="isFreeInterview")
 
     class Config:
         populate_by_name = True
@@ -41,7 +43,7 @@ class InterviewStartRequest(BaseModel):
     session_id: str
     payload: Dict[str, Any] = Field(default_factory=dict)
     # Optional overrides only if backend allows; prefer decoding from tokens
-    interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate"]] = None
+    interview_type: Optional[Literal["Technical", "HR", "Company", "Subject", "CaseStudy", "Communication", "Role-Based Interview", "Debate", "AIML"]] = None
     user_id: Optional[str] = None
 
     class Config:
@@ -67,9 +69,10 @@ class InterviewStartResponse(BaseModel):
 class UserResponseRequest(BaseModel):
     """
     User's response to interview question.
-    At least one of audio_data or text_response is required.
+    At least one of audio_data, text_response, or code_input is required.
     - audio_data: for speaking phases (transcribed).
     - text_response: for text-only phases (e.g. Communication comprehension/writing); can be sent alone.
+    - code_input: optional attachment on audio/text; may be sent alone for code-only turns.
     """
     audio_data: Optional[str] = None  # base64 encoded; omit for text-only (e.g. comprehension)
     text_response: Optional[str] = None  # plain text; can be the only field for writing phases

@@ -13,6 +13,17 @@ from .graph import build_feedback_graph
 # Load JSON config once at module level
 _FEEDBACK_ITEMS: Dict[str, dict] = {}
 
+# JWT / clients often send stable short ids (see docs/INTERVIEW_AND_FEEDBACK_API.md); JSON uses UUIDs.
+_LEGACY_ID_ALIASES: Dict[str, str] = {
+    "fi-coding-i": "f45201b4-c099-4221-a6e8-be9f0304e8d3",
+    "fi-faang": "423b67d5-493f-4020-a027-bbefbde253c3",
+    "fi-product-based": "5bcff863-406b-4f23-938d-04ed0d6f7dd",
+    "fi-mass-hiring": "b22c0e6f-f9a6-440b-929a-6b49dff14a69",
+    "fi-communication": "420a5484-b317-48e8-afa8-5ad001714809",
+    "fi-debate": "f1b2abe6-06c5-4238-92f4-00bd3375d62",
+    "fi-role-based": "79b985a8-4dd6-48b0-bc6b-2e32967366ef",
+}
+
 
 def _load_feedback_items() -> None:
     global _FEEDBACK_ITEMS
@@ -22,6 +33,9 @@ def _load_feedback_items() -> None:
     with open(path, "r", encoding="utf-8") as f:
         items = json.load(f)
     _FEEDBACK_ITEMS = {item["id"]: item for item in items}
+    for alias, canonical in _LEGACY_ID_ALIASES.items():
+        if canonical in _FEEDBACK_ITEMS and alias not in _FEEDBACK_ITEMS:
+            _FEEDBACK_ITEMS[alias] = _FEEDBACK_ITEMS[canonical]
 
 
 _load_feedback_items()
@@ -29,7 +43,20 @@ _load_feedback_items()
 
 def get_feedback_item(feedback_item_id: str) -> Optional[Dict[str, Any]]:
     """Return the feedback item config for the given id, or None if not found."""
-    return _FEEDBACK_ITEMS.get(feedback_item_id)
+    if feedback_item_id is None:
+        return None
+    k = str(feedback_item_id).strip()
+    if not k:
+        return None
+    if k in _FEEDBACK_ITEMS:
+        return _FEEDBACK_ITEMS[k]
+    kl = k.lower()
+    if kl in _FEEDBACK_ITEMS:
+        return _FEEDBACK_ITEMS[kl]
+    for existing_key, item in _FEEDBACK_ITEMS.items():
+        if existing_key.lower() == kl:
+            return item
+    return None
 
 
 def run_feedback_pipeline(
@@ -48,10 +75,9 @@ def run_feedback_pipeline(
     """
     from ..utils import get_llm
 
-    if feedback_item_id not in _FEEDBACK_ITEMS:
+    feedback_item = get_feedback_item(feedback_item_id)
+    if feedback_item is None:
         raise ValueError(f"Unknown feedback item id: {feedback_item_id}")
-
-    feedback_item = _FEEDBACK_ITEMS[feedback_item_id]
     sleeve_models = build_interview_feedback_models(feedback_item)
     llm = get_llm(google_api_key)
     agent = build_feedback_graph(sleeve_models, llm)

@@ -16,625 +16,6 @@ from uuid import uuid4
 import pickle
 # from django.apps import apps
 
-# ── Consulting topic case bank ────────────────────────────────────────────────
-
-TOPIC_FRAMEWORK_HINTS: dict[str, str] = {
-    "profitability": (
-        "Guide: decompose into Revenue (Price × Volume) vs Cost (Fixed vs Variable). "
-        "Push candidate to quantify each branch and form a hypothesis before drilling down."
-    ),
-    "market-entry": (
-        "Guide: Market attractiveness (size, growth, profitability) → Competitive position → "
-        "Entry strategy (Build / Buy / Partner). Push for prioritisation of which segment to enter first."
-    ),
-    "growth-strategy": (
-        "Guide: Ansoff Matrix or Growth Accounting (Acquisition / Retention / Monetisation). "
-        "Push for unit economics: CAC, LTV, payback period. Ask where growth is leaking."
-    ),
-    "mergers-acquisitions": (
-        "Guide: Strategic rationale → Revenue + Cost synergies → Valuation sanity check → "
-        "Integration risk. Push for a Go / No-Go recommendation with clear rationale."
-    ),
-    "operations-cost": (
-        "Guide: Process mapping → Identify waste / bottlenecks → Prioritise fixes. "
-        "Push for quantified impact of proposed changes and Quick Wins vs Structural Fixes."
-    ),
-    "pricing-strategy": (
-        "Guide: Value-based → Competitive → Cost-plus analysis. "
-        "Push for revenue impact modelling of the pricing change and a rollout plan."
-    ),
-    "product-innovation": (
-        "Guide: Customer need → Market opportunity → Build / prioritise decision. "
-        "Push for a prioritisation framework (RICE or similar) with explicit scoring."
-    ),
-    "turnaround-crisis": (
-        "Guide: Cash flow triage (survive) → Root cause (stabilise) → Growth plan (thrive). "
-        "Push for a 30 / 60 / 90-day action plan with clear owners."
-    ),
-}
-
-TOPIC_CASES: dict[str, dict] = {
-    "profitability": {
-        "display_name": "Profitability",
-        "cases": [
-            {
-                "case": (
-                    "A D2C skincare brand's gross margins dropped from 35 % to 18 % over 12 months "
-                    "despite flat revenue. The founder wants a path back to 30 % margins within two quarters. "
-                    "How would you approach this?"
-                ),
-                "interaction": (
-                    "Probe: revenue mix shift (hero SKU vs tail), COGS breakdown (raw materials, packaging, "
-                    "logistics), marketing spend as % of revenue, returns rate, any recent pricing changes."
-                ),
-            },
-            {
-                "case": (
-                    "A quick-service restaurant chain is profitable in Tier-1 cities but losing money in Tier-2. "
-                    "The CFO wants to know whether to exit Tier-2 or fix it. What is your recommendation?"
-                ),
-                "interaction": (
-                    "Probe: fixed vs variable cost structure per city tier, average order value differences, "
-                    "occupancy costs, brand awareness levels, break-even analysis per outlet."
-                ),
-            },
-        ],
-    },
-    "market-entry": {
-        "display_name": "Market Entry",
-        "cases": [
-            {
-                "case": (
-                    "A successful Indian B2B SaaS company wants to expand to Southeast Asia. "
-                    "They have 18 months of runway to become cash-flow positive in the new market. "
-                    "How would you evaluate this decision?"
-                ),
-                "interaction": (
-                    "Probe: market sizing per country, competitive landscape, regulatory environment, "
-                    "go-to-market strategy (direct vs partner), localisation requirements, resource requirements."
-                ),
-            },
-            {
-                "case": (
-                    "A premium gym chain operating in 5 metros wants to enter Tier-2 cities. "
-                    "They can open 10 new outlets in the next year. How should they decide which cities to enter?"
-                ),
-                "interaction": (
-                    "Probe: population and income demographics, fitness penetration rates, real estate costs, "
-                    "competition density, brand awareness, unit economics per outlet."
-                ),
-            },
-        ],
-    },
-    "growth-strategy": {
-        "display_name": "Growth Strategy",
-        "cases": [
-            {
-                "case": (
-                    "An ed-tech platform has 2 million registered users but only 80,000 paying subscribers. "
-                    "Monthly new registrations are flat. The board wants to double paying subscribers in 12 months. "
-                    "What levers would you pull?"
-                ),
-                "interaction": (
-                    "Probe: activation funnel (registration → first lesson → subscription), "
-                    "churn rate among paying users, CAC by channel, LTV, content gaps vs competitors."
-                ),
-            },
-            {
-                "case": (
-                    "A hyperlocal grocery delivery startup has strong retention in its first three cities "
-                    "but growth has plateaued at 15 % month-on-month. "
-                    "How would you identify and prioritise the next growth levers?"
-                ),
-                "interaction": (
-                    "Probe: Ansoff matrix (existing vs new products / markets), "
-                    "cohort analysis of order frequency, dark store economics, referral programme effectiveness."
-                ),
-            },
-        ],
-    },
-    "mergers-acquisitions": {
-        "display_name": "Mergers & Acquisitions",
-        "cases": [
-            {
-                "case": (
-                    "A large Indian conglomerate is considering acquiring a loss-making but fast-growing "
-                    "fintech startup for ₹2,000 crore. The startup has 5 million active users and "
-                    "a lending book of ₹500 crore. Should they proceed?"
-                ),
-                "interaction": (
-                    "Probe: strategic rationale (distribution, technology, talent), "
-                    "revenue and cost synergies, NPA risk in the lending book, "
-                    "integration complexity, alternative uses of ₹2,000 crore."
-                ),
-            },
-            {
-                "case": (
-                    "Two mid-sized logistics companies are considering a merger to compete with larger players. "
-                    "Combined they would have 30 % market share. Evaluate the strategic case for the merger."
-                ),
-                "interaction": (
-                    "Probe: cost synergies (fleet, warehouses, headcount), revenue synergies (cross-sell), "
-                    "cultural integration risk, regulatory approvals, combined valuation vs standalone."
-                ),
-            },
-        ],
-    },
-    "operations-cost": {
-        "display_name": "Operations & Cost",
-        "cases": [
-            {
-                "case": (
-                    "A restaurant chain's food cost is 42 % of revenue against an industry benchmark of 30 %. "
-                    "The operations head wants to close the gap within six months without changing the menu. "
-                    "How would you approach this?"
-                ),
-                "interaction": (
-                    "Probe: menu engineering (contribution margin per dish), supplier negotiations, "
-                    "portion control, waste and spoilage, inventory management, demand forecasting."
-                ),
-            },
-            {
-                "case": (
-                    "An e-commerce company's average delivery time is 4 days. They want to reduce it to 2 days "
-                    "while maintaining profitability. What is your approach?"
-                ),
-                "interaction": (
-                    "Probe: warehouse network (number, location, inventory placement), "
-                    "last-mile carrier SLAs, cost-benefit per region, "
-                    "customer willingness to pay for speed, impact on NPS."
-                ),
-            },
-        ],
-    },
-    "pricing-strategy": {
-        "display_name": "Pricing Strategy",
-        "cases": [
-            {
-                "case": (
-                    "An ed-tech company currently charges ₹999 per month. "
-                    "They are considering switching to ₹9,999 per year. "
-                    "How would you evaluate this pricing change?"
-                ),
-                "interaction": (
-                    "Probe: current LTV and payback period, cash flow implications, "
-                    "churn impact modelling, customer preference research, "
-                    "competitive pricing landscape, implementation and communication plan."
-                ),
-            },
-            {
-                "case": (
-                    "A B2B SaaS company is losing deals to a competitor that is 20 % cheaper. "
-                    "They have three options: match the price, bundle more features, or reposition upmarket. "
-                    "Which would you recommend?"
-                ),
-                "interaction": (
-                    "Probe: customer segmentation (price-sensitive vs value-driven), "
-                    "gross margin impact of price cut, feature development cost, "
-                    "ICP for upmarket segment, competitive differentiation."
-                ),
-            },
-        ],
-    },
-    "product-innovation": {
-        "display_name": "Product & Innovation",
-        "cases": [
-            {
-                "case": (
-                    "A social media app has 1 million downloads but only 100,000 monthly active users. "
-                    "The product team has five features to build this quarter but can only ship two. "
-                    "How should they decide?"
-                ),
-                "interaction": (
-                    "Probe: activation and retention funnel, core value proposition clarity, "
-                    "feature impact on key metrics (DAU, session length, D7 retention), "
-                    "engineering effort, RICE or similar prioritisation framework."
-                ),
-            },
-            {
-                "case": (
-                    "A consumer fintech app wants to launch a credit card product. "
-                    "They have a user base of 8 million but no lending licence. "
-                    "How would you evaluate the opportunity and recommend a path forward?"
-                ),
-                "interaction": (
-                    "Probe: market sizing, regulatory path (NBFC partnership vs own licence), "
-                    "user segment most likely to adopt, risk of cannibalising existing products, "
-                    "build vs partner decision."
-                ),
-            },
-        ],
-    },
-    "turnaround-crisis": {
-        "display_name": "Turnaround & Crisis",
-        "cases": [
-            {
-                "case": (
-                    "A food delivery app suffered a data breach exposing payment information of 2 million users. "
-                    "The story broke in the press this morning. You are the incoming CEO. "
-                    "What do you do in the first 72 hours?"
-                ),
-                "interaction": (
-                    "Probe: immediate containment (technical), customer communication strategy, "
-                    "regulatory and legal obligations, PR and brand damage control, "
-                    "compensation and goodwill measures, long-term security roadmap."
-                ),
-            },
-            {
-                "case": (
-                    "An online fashion retailer is burning ₹8 crore per month with only 4 months of runway left. "
-                    "Revenue is flat and the last fundraise fell through. "
-                    "How would you stabilise the business?"
-                ),
-                "interaction": (
-                    "Probe: cash flow triage (which costs can be cut immediately), "
-                    "revenue acceleration options (liquidate inventory, B2B channel), "
-                    "stakeholder management (investors, suppliers, employees), "
-                    "30 / 60 / 90-day plan."
-                ),
-            },
-        ],
-    },
-}
-
-# ── Company growth story case bank ───────────────────────────────────────────
-
-COMPANY_STORIES: dict[str, dict] = {
-    "zomato": {
-        "display_name": "Zomato",
-        "fun_title": "From Menu to Home",
-        "context": (
-            "Zomato started as a restaurant discovery platform in 2008. By 2015 it had expanded to "
-            "24 countries but was burning cash. In 2019 it pivoted hard to food delivery, raised $1B+, "
-            "went public in 2021, and then faced a profitability crisis in 2022 before turning "
-            "EBITDA-positive in 2023."
-        ),
-        "cases": [
-            {
-                "case": (
-                    "Zomato's monthly active users grew 3× post-COVID but unit economics worsened — "
-                    "delivery costs rose 40 % while average order value stayed flat. "
-                    "The board wants a path to profitability within 18 months. How would you approach this?"
-                ),
-                "interaction": (
-                    "Probe: delivery cost structure (fixed vs variable), AOV levers (Zomato Gold, bundling), "
-                    "dark store expansion, customer segmentation by order frequency, take-rate optimisation."
-                ),
-            },
-            {
-                "case": (
-                    "Zomato acquired Blinkit for $568M in 2022. At the time Blinkit was loss-making. "
-                    "Evaluate whether this was the right strategic decision."
-                ),
-                "interaction": (
-                    "Probe: synergies (shared riders, dark stores), Blinkit unit economics trajectory, "
-                    "Swiggy Instamart competitive response, long-term platform value vs near-term cash burn."
-                ),
-            },
-        ],
-    },
-    "swiggy": {
-        "display_name": "Swiggy",
-        "fun_title": "Hunger Games",
-        "context": (
-            "Swiggy launched in 2014 as a food delivery platform in Bengaluru. It scaled rapidly, "
-            "raised over $3.6B, launched Instamart (10-minute grocery delivery) in 2021, "
-            "and went public in 2024 — still working toward profitability."
-        ),
-        "cases": [
-            {
-                "case": (
-                    "Swiggy Instamart is growing fast but each dark store takes 12–18 months to break even. "
-                    "The CFO wants to reduce that to 9 months. How would you approach this?"
-                ),
-                "interaction": (
-                    "Probe: dark store economics (fixed costs, SKU mix, wastage), "
-                    "demand density per pin code, basket size optimisation, "
-                    "private label margins, delivery cost per order."
-                ),
-            },
-            {
-                "case": (
-                    "Swiggy's food delivery business is profitable in the top 10 cities but loss-making "
-                    "in the next 30 cities. Should Swiggy exit those cities or invest to fix them?"
-                ),
-                "interaction": (
-                    "Probe: unit economics per city (contribution margin, fixed cost allocation), "
-                    "competitive intensity in Tier-2, brand awareness, path to break-even timeline."
-                ),
-            },
-        ],
-    },
-    "cred": {
-        "display_name": "CRED",
-        "fun_title": "Pay Day",
-        "context": (
-            "CRED launched in 2018 as a credit card bill payment app targeting high-credit-score Indians. "
-            "It grew to 12M+ members by 2022, expanded into lending (CRED Cash), travel, and commerce, "
-            "and is valued at $6.4B — still pre-profitability."
-        ),
-        "cases": [
-            {
-                "case": (
-                    "CRED has 12 million members who pay credit card bills but only 15 % use any of its "
-                    "monetisation products (CRED Cash, CRED Travel, CRED Store). "
-                    "How would you improve monetisation without alienating the core user base?"
-                ),
-                "interaction": (
-                    "Probe: user segmentation (high-spend vs low-spend), product-market fit of each vertical, "
-                    "trust and brand perception, cross-sell funnel, CAC vs LTV per product."
-                ),
-            },
-            {
-                "case": (
-                    "CRED is considering launching a UPI payments product to compete with PhonePe and GPay. "
-                    "Should they do it, and if so how?"
-                ),
-                "interaction": (
-                    "Probe: market sizing and competitive intensity, CRED's differentiation angle, "
-                    "regulatory requirements, monetisation model for UPI, "
-                    "risk of distraction from core credit card business."
-                ),
-            },
-        ],
-    },
-    "meesho": {
-        "display_name": "Meesho",
-        "fun_title": "Resale Royale",
-        "context": (
-            "Meesho started in 2015 as a social commerce platform enabling resellers to sell via WhatsApp. "
-            "It pivoted to a direct-to-consumer marketplace in 2021, targeting Tier-2/3 India with "
-            "zero-commission for sellers and free delivery. It reached 140M+ annual transacting users by 2023."
-        ),
-        "cases": [
-            {
-                "case": (
-                    "Meesho offers zero commission to sellers and free returns to buyers. "
-                    "Its logistics cost per order is ₹65 and average order value is ₹350. "
-                    "How would you build a path to profitability?"
-                ),
-                "interaction": (
-                    "Probe: monetisation levers (ads, fulfilment fees, financial services), "
-                    "logistics cost reduction (own fleet vs 3PL), return rate reduction, "
-                    "AOV improvement through category mix."
-                ),
-            },
-            {
-                "case": (
-                    "Meesho wants to expand from unbranded / value products into branded goods "
-                    "to increase AOV. How should they approach this without losing their core Tier-2 user base?"
-                ),
-                "interaction": (
-                    "Probe: brand willingness to sell on Meesho, pricing perception risk, "
-                    "logistics and return handling for branded goods, "
-                    "user segmentation (value vs aspirational buyers)."
-                ),
-            },
-        ],
-    },
-    "zepto": {
-        "display_name": "Zepto",
-        "fun_title": "10 Minutes to Glory",
-        "context": (
-            "Zepto was founded in 2021 by two Stanford dropouts. It pioneered 10-minute grocery delivery "
-            "in India through a dark store network, raised $1.4B+ by 2024, and reached a $5B valuation — "
-            "one of the fastest-growing startups in Indian history."
-        ),
-        "cases": [
-            {
-                "case": (
-                    "Zepto operates 350+ dark stores across 10 cities. Each store costs ₹40L to set up "
-                    "and takes 8 months to break even. A competitor is undercutting prices by 10 %. "
-                    "How should Zepto respond?"
-                ),
-                "interaction": (
-                    "Probe: price elasticity of Zepto's user base, margin structure, "
-                    "non-price differentiation (speed, assortment, reliability), "
-                    "competitor's ability to sustain the price cut, selective vs blanket response."
-                ),
-            },
-            {
-                "case": (
-                    "Zepto is considering expanding beyond groceries into pharmacy, electronics, and apparel. "
-                    "Which category should they enter first and why?"
-                ),
-                "interaction": (
-                    "Probe: category economics (margin, return rate, perishability), "
-                    "dark store compatibility, regulatory requirements for pharmacy, "
-                    "competitive landscape per category, user demand signals."
-                ),
-            },
-        ],
-    },
-    "byjus": {
-        "display_name": "Byju's",
-        "fun_title": "Class Dismissed",
-        "context": (
-            "Byju's was founded in 2011 and became the world's most valuable ed-tech company at $22B in 2022. "
-            "It grew through aggressive sales, acquisitions (Aakash, WhiteHat Jr), and international expansion. "
-            "By 2023 it faced a severe liquidity crisis, regulatory scrutiny, and mass layoffs."
-        ),
-        "cases": [
-            {
-                "case": (
-                    "Byju's spent ₹2,400 crore on sales and marketing in FY22 — more than its revenue. "
-                    "Its CAC was ₹15,000 per student against an average LTV of ₹18,000. "
-                    "How would you restructure the business to reach sustainable unit economics?"
-                ),
-                "interaction": (
-                    "Probe: CAC reduction levers (channel mix, referrals, school partnerships), "
-                    "LTV improvement (retention, upsell, completion rates), "
-                    "product-led growth vs sales-led growth, which segments to prioritise."
-                ),
-            },
-            {
-                "case": (
-                    "Byju's acquired WhiteHat Jr for $300M in 2020 to enter coding education. "
-                    "By 2022 WhiteHat Jr was losing money and had significant brand damage. "
-                    "What went wrong and what would you have done differently?"
-                ),
-                "interaction": (
-                    "Probe: acquisition rationale vs reality, integration failures, "
-                    "sales culture mismatch, product-market fit of live coding for young children, "
-                    "post-acquisition governance."
-                ),
-            },
-        ],
-    },
-    "ola": {
-        "display_name": "Ola",
-        "fun_title": "Ride or Die",
-        "context": (
-            "Ola was founded in 2010 and became India's largest ride-hailing platform. "
-            "It expanded to the UK, Australia, and New Zealand, launched Ola Electric in 2017, "
-            "and by 2024 Ola Electric had gone public — while the ride-hailing business faced "
-            "intense competition from Uber and driver-partner unrest."
-        ),
-        "cases": [
-            {
-                "case": (
-                    "Ola's driver-partner churn is 35 % per month in metro cities. "
-                    "Each new driver costs ₹8,000 to onboard and train. "
-                    "How would you reduce churn and improve driver economics?"
-                ),
-                "interaction": (
-                    "Probe: root causes of churn (earnings, flexibility, platform fees, support quality), "
-                    "driver segmentation (full-time vs part-time), incentive structure redesign, "
-                    "comparison with Uber's driver proposition."
-                ),
-            },
-            {
-                "case": (
-                    "Ola Electric sold 500,000 scooters in FY24 but has a 40 % service complaint rate. "
-                    "This is hurting repeat purchases and brand perception. "
-                    "How would you fix the post-sale service problem?"
-                ),
-                "interaction": (
-                    "Probe: service network density vs vehicle density, "
-                    "software vs hardware issues breakdown, "
-                    "cost of building own service centres vs authorised partner model, "
-                    "impact on NPS and repeat purchase rate."
-                ),
-            },
-        ],
-    },
-    "flipkart": {
-        "display_name": "Flipkart",
-        "fun_title": "Cart Before the Horse",
-        "context": (
-            "Flipkart was founded in 2007 as an online bookstore and grew into India's largest e-commerce "
-            "platform. It launched Myntra (fashion) and PhonePe (payments), was acquired by Walmart "
-            "for $16B in 2018, and continues to battle Amazon India for market leadership."
-        ),
-        "cases": [
-            {
-                "case": (
-                    "Flipkart's fashion vertical (Myntra + Flipkart Fashion) has a 35 % return rate "
-                    "versus 8 % for electronics. Returns cost ₹120 per order in logistics and processing. "
-                    "How would you reduce the return rate without hurting conversion?"
-                ),
-                "interaction": (
-                    "Probe: root causes of returns (size mismatch, quality, impulse buying), "
-                    "AR try-on and size recommendation tools, return policy tightening trade-offs, "
-                    "seller quality standards, impact on GMV if policy tightened."
-                ),
-            },
-            {
-                "case": (
-                    "Flipkart wants to grow its advertising revenue from ₹3,000 crore to ₹10,000 crore "
-                    "in three years. How would you build this business?"
-                ),
-                "interaction": (
-                    "Probe: current ad product suite (sponsored listings, display, video), "
-                    "seller vs brand advertiser mix, measurement and attribution capabilities, "
-                    "pricing model (CPC vs CPM vs CPA), comparison with Amazon Ads."
-                ),
-            },
-        ],
-    },
-}
-
-# ── Prompt templates ──────────────────────────────────────────────────────────
-
-TOPIC_GREETING_PROMPT_TEMPLATE = '''
-Your name is Glee and you are conducting a {topic_name} case study interview.
-Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally.
-Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold, italics, or coding text, as if you were speaking aloud.
-
-Your [INSTRUCTIONS] are:
-
-1. Start with a Warm Greeting: Begin with a friendly and personal greeting.
-
-2. Introduce Yourself: State your name and your role for the session.
-
-3. Explain the Format: Briefly outline what the candidate can expect. This is a {topic_name} case interview. The focus is on their thought process and structured problem-solving approach, not just the final answer. Encourage them to think out loud.
-
-4. Invite Questions: Explicitly ask the candidate if they have any questions ONLY about the process before you start.
-
-5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only in the context of the interview.
-'''
-
-TOPIC_QUESTION_PROMPT_TEMPLATE = """
-You are an interviewer conducting a {topic_name} case study interview AND SIMPLY FOLLOW [INSTRUCTIONS].
-Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally.
-Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold, italics, or coding text, as if you were speaking aloud.
-
-{framework_hints}
-
-Your [INSTRUCTIONS] are:
-
-1. Present the case: CASE QUESTION: {case_question}
-
-CASE REFERENCE (for your use only — do NOT read this out): {case_reference}
-
-2. Invite the interviewee to ask any clarifying questions before structuring their approach.
-
-3. Begin and continue the conversation using the CASE REFERENCE to guide your cross-questions.
-
-4. Do NOT reveal the CASE REFERENCE or framework hints to the candidate.
-"""
-
-COMPANY_GREETING_PROMPT_TEMPLATE = '''
-Your name is Glee and you are conducting a case study interview based on {company_name}'s real growth story.
-This session is titled "{fun_title}".
-Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally.
-Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold, italics, or coding text, as if you were speaking aloud.
-
-Your [INSTRUCTIONS] are:
-
-1. Start with a Warm Greeting: Begin with a friendly and personal greeting.
-
-2. Introduce Yourself: State your name and your role for the session.
-
-3. Set the Stage: Briefly share this context about {company_name}: {company_context}
-
-4. Explain the Format: Tell the candidate they will be given a specific business problem that {company_name} actually faced. The focus is on their structured thinking and problem-solving process, not just the final answer. Encourage them to think out loud.
-
-5. Invite Questions: Explicitly ask the candidate if they have any questions ONLY about the process before you start.
-
-6. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only in the context of the interview.
-'''
-
-COMPANY_QUESTION_PROMPT_TEMPLATE = """
-You are an interviewer conducting a case study interview about a real {company_name} business problem AND SIMPLY FOLLOW [INSTRUCTIONS].
-Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally.
-Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold, italics, or coding text, as if you were speaking aloud.
-
-Your [INSTRUCTIONS] are:
-
-1. Present the case: CASE QUESTION: {case_question}
-
-CASE REFERENCE (for your use only — do NOT read this out): {case_reference}
-
-2. Invite the interviewee to ask any clarifying questions before structuring their approach.
-
-3. Begin and continue the conversation using the CASE REFERENCE to guide your cross-questions. Keep the {company_name} context in mind throughout.
-
-4. Do NOT reveal the CASE REFERENCE to the candidate.
-"""
-
-# ── Practice case studies database (generic fallback) ────────────────────────
-
 # Practice case studies database
 practice_cases = {
     "ecommerce_revenue_drop": {
@@ -916,13 +297,6 @@ class CaseStudyInterviewState(MessagesState):
   current_case_question: Annotated[str, Field(default="")]
   current_case_reference: Annotated[str, Field(default="")]
   case_completed: Annotated[bool, Field(default=False)]
-  # Consulting topic fields (topic-based case interviews)
-  consulting_topic: Annotated[str, Field(default="")]
-  topic_name: Annotated[str, Field(default="Case Study")]
-  # Company growth story fields (real-company case interviews)
-  company_slug: Annotated[str, Field(default="")]
-  company_name: Annotated[str, Field(default="")]
-  fun_title: Annotated[str, Field(default="")]
 
 
 class CaseStudyGreetingRouting(BaseModel):
@@ -988,25 +362,11 @@ def create_greeting_query_node(key: str) -> Callable:
 
 
 def create_case_study_before_node(llm):
-  def _Node(state: CaseStudyInterviewState):
-    company_slug: str = state.get("company_slug", "") or ""
-    consulting_topic: str = state.get("consulting_topic", "") or ""
-
-    if company_slug and company_slug in COMPANY_STORIES:
-      cases = COMPANY_STORIES[company_slug]["cases"]
-    elif consulting_topic and consulting_topic in TOPIC_CASES:
-      cases = TOPIC_CASES[consulting_topic]["cases"]
-    else:
-      # Generic fallback — use the original hardcoded practice_cases dict
-      case_no = random.randint(0, len(practice_cases) - 1)
-      chosen = practice_cases[list(practice_cases.keys())[case_no]]
-      state["current_case_question"] = chosen["case"]
-      state["current_case_reference"] = chosen["interaction"]
-      return state
-
-    chosen = random.choice(cases)
-    state["current_case_question"] = chosen["case"]
-    state["current_case_reference"] = chosen["interaction"]
+  def _Node(state:CaseStudyInterviewState):
+    case_no = random.randint(0,14)
+    state['current_case_question'] = practice_cases[list(practice_cases.keys())[case_no]]['case']
+    state['current_case_reference'] = practice_cases[list(practice_cases.keys())[case_no]]['interaction']
+    # Removed timer logic as per requirements
     return state
   return _Node
 
@@ -1122,66 +482,55 @@ def rag_case_study(query: str, top_k: int = 2) -> str:
 def create_greeting_node(Greeting_llm) -> Callable:
   def _Node(state: S) -> S:
     if state["LastNode"] != "Greeting":
-      company_slug: str = state.get("company_slug", "") or ""
-      consulting_topic: str = state.get("consulting_topic", "") or ""
-
-      if company_slug and company_slug in COMPANY_STORIES:
-        story = COMPANY_STORIES[company_slug]
-        system_text = COMPANY_GREETING_PROMPT_TEMPLATE.format(
-          company_name=story["display_name"],
-          fun_title=story["fun_title"],
-          company_context=story["context"],
-        )
-      elif consulting_topic and consulting_topic in TOPIC_CASES:
-        topic_data = TOPIC_CASES[consulting_topic]
-        system_text = TOPIC_GREETING_PROMPT_TEMPLATE.format(
-          topic_name=topic_data["display_name"],
-        )
-      else:
-        system_text = CASE_GREETING_PROMPT
-
-      greeting_prompt = ChatPromptTemplate.from_messages([("system", system_text)])
-      input_ = greeting_prompt.format_messages() + [{"role": "human", "content": "Start the interview now"}]
+      inp_company = getattr(state, "company", None)
+      inp_state = getattr(state, "subject", None)
+      # greeting_prompt = get_greeting_prompt_template(interview_type, inp_company or inp_state)
+      # print(greeting_prompt.format_messages())
+      greeting_prompt = ChatPromptTemplate.from_messages([
+          ("system", CASE_GREETING_PROMPT),
+      # ("human", "{input}")
+      ])
+      input_ = greeting_prompt.format_messages() + [{"role":"human","content":"Start the interview now"}]
       state["messages"] = state["messages"] + input_
+    # else:
+    #   state["messages"].append(
+    #         AIMessage(content="", tool_calls=[
+    #             {
+    #                 'name': 'rag_case_study',
+    #                 'args': {'query': state["current_query"]}
+    #             }
+    #         ]
+    #     ))
 
     response = Greeting_llm.invoke(state["messages"])
+
+    # if state["current_query"]:
+    #   state["messages"].append()
+    #   pass
+
     state["messages"] = state["messages"] + [response]
     state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
     state["LastNode"] = "Greeting"
+
+    # print("We are delivering greetings-->",response)
     return state
   return _Node
 
 
 
 def create_case_study_node(CaseStudy_llm):
-  def _Node(state: CaseStudyInterviewState):
+  def _Node(state:CaseStudyInterviewState):
     if state["LastNode"] != "CaseStudy":
-      company_slug: str = state.get("company_slug", "") or ""
-      consulting_topic: str = state.get("consulting_topic", "") or ""
-
-      if company_slug and company_slug in COMPANY_STORIES:
-        story = COMPANY_STORIES[company_slug]
-        formatted_prompt = COMPANY_QUESTION_PROMPT_TEMPLATE.format(
-          company_name=story["display_name"],
-          case_question=state["current_case_question"],
-          case_reference=state["current_case_reference"],
-        )
-      elif consulting_topic and consulting_topic in TOPIC_CASES:
-        topic_data = TOPIC_CASES[consulting_topic]
-        formatted_prompt = TOPIC_QUESTION_PROMPT_TEMPLATE.format(
-          topic_name=topic_data["display_name"],
-          framework_hints=TOPIC_FRAMEWORK_HINTS.get(consulting_topic, ""),
-          case_question=state["current_case_question"],
-          case_reference=state["current_case_reference"],
-        )
-      else:
-        formatted_prompt = CASE_QUESTION_PROMPT.format(
-          case_question=state["current_case_question"],
-          case_reference=state["current_case_reference"],
-        )
-
-      case_prompt = ChatPromptTemplate.from_messages([("system", formatted_prompt)])
-      state["messages"] = case_prompt.format_messages() + [{"role": "human", "content": "Please present the case study question"}]
+      # Format the prompt with actual case question and reference
+      formatted_prompt = CASE_QUESTION_PROMPT.format(
+        case_question=state["current_case_question"],
+        case_reference=state["current_case_reference"]
+      )
+      # Create a new system message with the formatted prompt
+      case_prompt = ChatPromptTemplate.from_messages([
+        ("system", formatted_prompt),
+      ])
+      state["messages"] = case_prompt.format_messages() + [{"role":"human","content":"Please present the case study question"}]
     
     response = CaseStudy_llm.invoke(state["messages"])
 

@@ -21,6 +21,7 @@ from langgraph.checkpoint.redis import RedisSaver
 from services.llm_metrics import (
     get_big5_from_transcript_llm,
     get_speech_summary_from_transcript_llm,
+    get_language_quality_scores_from_transcript_llm,
     get_candidate_transcript_from_messages,
 )
 from services.dynamic_metrics import get_stored_video_telemetry
@@ -99,6 +100,50 @@ def extract_qa_pairs(messages):
         return qa_pairs
 
 
+def _safe_score(value: Any) -> Optional[float]:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric < 0:
+        return 0.0
+    if numeric > 100:
+        return 100.0
+    return round(numeric, 2)
+
+
+def _get_detailed_language_metrics(messages, google_key: str) -> Dict[str, Any]:
+    """
+    Communication + grammar come only from the language-quality LLM on the candidate transcript.
+    No fallback that copies one number into all sub-metrics; on failure everything is null.
+    """
+    empty: Dict[str, Any] = {
+        "communicationMetrics": None,
+        "grammarMetrics": None,
+        "communicationScore": None,
+        "grammarScore": None,
+    }
+    transcript = get_candidate_transcript_from_messages(messages)
+    if not transcript.strip() or len(transcript.strip()) <= 30 or not google_key:
+        return empty
+
+    detailed = get_language_quality_scores_from_transcript_llm(transcript, google_key)
+    if not detailed:
+        detailed = get_language_quality_scores_from_transcript_llm(transcript, google_key)
+
+    if not detailed:
+        return empty
+
+    communication_metrics = detailed.get("communicationMetrics")
+    grammar_metrics = detailed.get("grammarMetrics")
+    return {
+        "communicationMetrics": communication_metrics,
+        "grammarMetrics": grammar_metrics,
+        "communicationScore": _safe_score((communication_metrics or {}).get("overall")),
+        "grammarScore": _safe_score((grammar_metrics or {}).get("overall")),
+    }
+
+
 def _run_unified_feedback_pipeline(
     session_id: str,
     history: str,
@@ -107,6 +152,7 @@ def _run_unified_feedback_pipeline(
     redis_client: Redis,
     feedback_item_id: str,
     google_key: str,
+    is_free_interview: bool = False,
 ) -> Dict[str, Any]:
     """Run the unified feedback pipeline (feedback_items.json + service.py) and save to DB + Redis."""
     from workflows.feedback.service import run_feedback_pipeline, get_feedback_item
@@ -129,7 +175,7 @@ def _run_unified_feedback_pipeline(
     interaction_feedback = pipeline_result.get("interaction_feedback") or []
     interaction_status_logs = [{"status": x.get("status"), "comment": x.get("comment")} for x in interaction_feedback]
     history_ckpt, messages = get_interaction_history_from_redis(session_id)
-    interaction_logs = extract_qa_pairs(messages)[1:] if messages else []
+    interaction_logs = extract_qa_pairs(messages) if messages else []
 
     interview_test_id = (session or {}).get("interview_test_id")
     if interview_test_id is None and session:
@@ -138,6 +184,8 @@ def _run_unified_feedback_pipeline(
     interview_test_id_str = str(interview_test_id) if interview_test_id is not None else ""
     duration_seconds = session.get("duration", 0) if session else 0
     items = pipeline_result.get("sleeve_scores") or {}
+
+    language_metrics = _get_detailed_language_metrics(messages, google_key)
 
     save_feedback_items_to_db(
         user_email=user_email,
@@ -150,6 +198,11 @@ def _run_unified_feedback_pipeline(
         interaction_logs=interaction_logs,
         interaction_status_logs=interaction_status_logs,
         user_id=(session or {}).get("user_id"),
+        communication_score=language_metrics["communicationScore"],
+        grammar_score=language_metrics["grammarScore"],
+        communication_metrics=language_metrics["communicationMetrics"],
+        grammar_metrics=language_metrics["grammarMetrics"],
+        is_free_interview=is_free_interview,
     )
     feedback = {
         "items": items,
@@ -159,6 +212,10 @@ def _run_unified_feedback_pipeline(
         "interaction_status_logs": interaction_status_logs,
         "interview_type_id": feedback_item_id,
         "interview_title": pipeline_result.get("interview_title", ""),
+        "communicationScore": language_metrics["communicationScore"],
+        "grammarScore": language_metrics["grammarScore"],
+        "communicationMetrics": language_metrics["communicationMetrics"],
+        "grammarMetrics": language_metrics["grammarMetrics"],
     }
     redis_key = f"feedback:{session_id}"
     redis_client.setex(redis_key, 3600, json.dumps(feedback))
@@ -187,6 +244,10 @@ def generate_feedback(self, session_id: str, history: str, user_email: str) -> D
         if not get_feedback_item(feedback_item_id):
             return {"status": "error", "error": f"Unknown feedback_item_id: {feedback_item_id}", "feedback": None}
 
+        # Extract is_free_interview from session payload (stored at interview start)
+        session_payload = (session or {}).get("payload") or {}
+        is_free_interview = bool(session_payload.get("is_free_interview", False))
+
         return _run_unified_feedback_pipeline(
             session_id=session_id,
             history=history,
@@ -195,6 +256,7 @@ def generate_feedback(self, session_id: str, history: str, user_email: str) -> D
             redis_client=self.redis_client,
             feedback_item_id=feedback_item_id,
             google_key=google_key,
+            is_free_interview=is_free_interview,
         )
     except Exception as e:
         logger.error(f"Error generating feedback for session {session_id}: {e}", exc_info=True)
@@ -263,7 +325,7 @@ def generate_technical_feedback(self, session_id: str, history: str, user_email:
         session = session_manager.get_session(session_id)
         
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
 
         # 1) Telemetry: only from stored data (set_video_telemetry) — same key as set endpoint
         video_telemetry = get_stored_video_telemetry(self.redis_client, session_id)
@@ -380,7 +442,7 @@ def generate_hr_feedback(self, session_id: str, history: str, user_email: str) -
         result = graph.invoke({"history_log": history})
 
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
         # Extract results
         feedback = {
             "clarity_score": result["communication_skills"].clarity,
@@ -514,7 +576,7 @@ def generate_case_study_feedback(self, session_id: str, history: str, user_email
         result = graph.invoke({"history_log": history})
 
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
         # Extract results
         feedback = {
             "problem_understanding_score": result["analytical"].problem_understanding,
@@ -634,7 +696,7 @@ def generate_communication_feedback(self, session_id: str, history: str, user_em
         result = graph.invoke({"history_log": history})
 
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
 
         s = result["speaking"]
         c = result["comprehension"]
@@ -726,7 +788,7 @@ def generate_debate_feedback(self, session_id: str, history: str, user_email: st
         result = graph.invoke({"history_log": history})
 
         history, messages = get_interaction_history_from_redis(session_id)
-        interaction_log = extract_qa_pairs(messages)[1:]
+        interaction_log = extract_qa_pairs(messages)
 
         arg = result["argumentation"]
         pers = result["persuasion"]

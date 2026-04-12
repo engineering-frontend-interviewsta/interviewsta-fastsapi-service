@@ -366,12 +366,13 @@ async def start_interview(
                 detail="user_id could not be resolved from Bearer token (sub/uid/email)",
             )
         logger.info(f"Starting {interview_type} interview for user {user_info.get('email')}")
-        # Merge feedback_item_id and interview_test_id from X-Interview-Access-Token into payload
+        # Merge feedback_item_id, interview_test_id, and is_free_interview from X-Interview-Access-Token into payload
         payload = dict(request.payload or {})
         if getattr(interview_access, "feedback_item_id", None):
             payload["feedback_item_id"] = interview_access.feedback_item_id
         if getattr(interview_access, "interview_test_id", None) is not None:
             payload["interview_test_id"] = interview_access.interview_test_id
+        payload["is_free_interview"] = bool(getattr(interview_access, "is_free_interview", False))
         task = process_interview_start.apply_async(
             args=[request.session_id, interview_type, user_id, payload],
             queue="interview",
@@ -489,13 +490,14 @@ async def submit_response(
             err = validation_result["error"]
             raise HTTPException(status_code=err["code"], detail=err["detail"])
         
-        # Validate input: at least one of audio or text (text-only is valid e.g. for comprehension phase)
+        # Validate input: at least one of audio, text, or code (code-only matches legacy “submit code tab” flows)
         has_audio = bool(request.audio_data and request.audio_data.strip())
         has_text = bool(request.text_response is not None and str(request.text_response).strip())
-        if not has_audio and not has_text:
+        has_code = bool(request.code_input is not None and str(request.code_input).strip())
+        if not has_audio and not has_text and not has_code:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Provide at least one of: audio_data (for speech) or text_response (for text/writing, e.g. Communication comprehension phase)"
+                detail="Provide at least one of: audio_data, text_response, or code_input",
             )
         
         # Queue complete pipeline task (non-blocking)
