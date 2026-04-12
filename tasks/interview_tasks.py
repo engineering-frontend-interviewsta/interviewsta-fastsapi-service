@@ -23,6 +23,7 @@ from workflows.case_study import CaseStudyInterviewState
 from workflows.communication import CommunicationInterviewState
 from workflows.rolebased import RoleBasedInterviewState
 from workflows.debate import DebateInterviewState
+from workflows.aiml import AimlInterviewState
 from langchain_core.messages import HumanMessage
 from services.audio_processor import AudioProcessor
 
@@ -241,12 +242,7 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             current_query="",
             current_case_question="",
             current_case_reference="",
-            case_completed=False,
-            consulting_topic=payload.get("consulting_topic", ""),
-            topic_name=payload.get("topic_name", "Case Study"),
-            company_slug=payload.get("company_slug", ""),
-            company_name=payload.get("company_name", ""),
-            fun_title=payload.get("fun_title", ""),
+            case_completed=False
         )
     elif interview_type == "Communication":  # ADD THIS BLOCK
         return CommunicationInterviewState(
@@ -272,6 +268,15 @@ def create_initial_state(interview_type: str, payload: Dict[str, Any]):
             history="",
             messages=[],
             rounds_completed=0,
+        )
+    elif interview_type == "AIML":
+        # interview_topic maps to the InterviewTest title (e.g. "Transformers & Attention"),
+        # which is embedded in the access token JWT as `title` and forwarded in payload.
+        return AimlInterviewState(
+            LastNode="",
+            history="",
+            interview_topic=payload.get("title", "AI/ML"),
+            TopicResearch="",
         )
     else:
         raise ValueError(f"Invalid interview type: {interview_type}")
@@ -716,14 +721,19 @@ def process_user_response_with_transcription(
             # Text-only (e.g. Communication comprehension phase): use as-is and store as transcript
             self.session_manager.set_transcript(session_id, human_input)
             logger.info(f"Text-only response for session {session_id} ({len(human_input)} chars)")
-        
+
+        code_text = (code_input or "").strip() or None
+        if not human_input and code_text:
+            # Code-only (coding tab): must be valid without separate text/audio
+            human_input = f"[CODE INPUT]\n{code_text}"
+            self.session_manager.set_transcript(session_id, human_input)
+            logger.info(f"Code-only response for session {session_id} ({len(code_text)} chars)")
+        elif human_input and code_text:
+            human_input += f"\n\n[CODE INPUT]\n{code_text}"
+
         if not human_input:
             clear_processing_flag(self.redis_client, session_id)
-            raise ValueError("No input received - empty audio or text")
-        
-        # Add code input if provided
-        if code_input:
-            human_input += f"\n\n[CODE INPUT]\n{code_input}"
+            raise ValueError("No input received - empty audio, text, or code")
         
         # Step 2: Process through workflow - 50% progress
         self.update_state(
@@ -935,8 +945,8 @@ def process_user_response_with_transcription(
         )
         self.session_manager.set_status(session_id, "ai_responded")
         
-        # Clear processing flag
-        # clear_processing_flag(self.redis_client, session_id)
+        # Must clear so the next POST /respond is not rejected with 429 while TTL is still active.
+        clear_processing_flag(self.redis_client, session_id)
         
         logger.info(f"Response processed successfully for session {session_id}")
         

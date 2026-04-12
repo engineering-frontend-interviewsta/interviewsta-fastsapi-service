@@ -23,6 +23,11 @@ def _drf_headers() -> Dict[str, str]:
     api_key = os.getenv("DRF_INTERNAL_API_KEY", "")
     if api_key:
         headers["X-Internal-API-Key"] = api_key
+    else:
+        logger.warning(
+            "DRF_INTERNAL_API_KEY is unset; Nest internal POSTs will get 401. "
+            "Set it to the same value as INTERNAL_API_KEY in interviewsta-backend/.env"
+        )
     return headers
 
 def _post(path: str, payload: Dict[str, Any], timeout: int = 30) -> Dict[str, Any]:
@@ -92,38 +97,135 @@ def get_interview_questions(interview_type_id: Optional[Union[int, str]] = None)
     return _get("/internal/interview-questions/", params={"interview_type_id": interview_type_id})
 
 
+def build_resume_analysis_result_dict(
+    session_id: str,
+    resume_name: str,
+    analysis_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Build the full JSON-serializable result dict from LangGraph state (Pydantic nodes).
+    Used for Redis and Nest polling even if the internal POST fails.
+    """
+    section = analysis_result.get("section_analysis")
+    keyword = analysis_result.get("keyword_analysis")
+    alignment = analysis_result.get("job_alignment_analysis")
+    strengths = analysis_result.get("strengths_and_improvements")
+
+    company = analysis_result.get("company", "") or ""
+    role = analysis_result.get("role", "") or ""
+
+    job_match_score = int(getattr(section, "job_match_score", 0) or 0)
+    format_and_structure = int(getattr(section, "format_and_structure", 0) or 0)
+    content_quality = int(getattr(section, "content_quality", 0) or 0)
+    length_and_conciseness = int(getattr(section, "length_and_conciseness", 0) or 0)
+    keywords_optimization = int(getattr(section, "keywords_optimization", 0) or 0)
+    ats_score = int(getattr(section, "ats_score", 0) or 0)
+
+    sections = [
+        {"name": "job_match_score", "score": job_match_score},
+        {"name": "format_and_structure", "score": format_and_structure},
+        {"name": "content_quality", "score": content_quality},
+        {"name": "length_and_conciseness", "score": length_and_conciseness},
+        {"name": "keywords_optimization", "score": keywords_optimization},
+        {"name": "ats_score", "score": ats_score},
+    ]
+
+    overall_score = round(
+        sum(s["score"] for s in sections) / len(sections),
+        2,
+    ) if sections else 0.0
+
+    found_kw = list(getattr(keyword, "found_keywords", []) or [])
+    not_found_kw = list(getattr(keyword, "not_found_keywords", []) or [])
+    top_3_kw = list(getattr(keyword, "top_3_keywords", []) or [])
+    insights_list = list(getattr(alignment, "insights", []) or [])
+    req_skills = int(getattr(alignment, "required_skills", 0) or 0)
+    pref_skills = int(getattr(alignment, "preferred_skills", 0) or 0)
+    experience = int(getattr(alignment, "experience", 0) or 0)
+    education = int(getattr(alignment, "education", 0) or 0)
+    cand_strengths = list(getattr(strengths, "candidate_strengths", []) or [])
+    cand_improve = list(getattr(strengths, "candidates_areas_of_improvements", []) or [])
+
+    return {
+        "session_id": session_id,
+        "resume_name": resume_name,
+        "company": company,
+        "role": role,
+        "overall_score": overall_score,
+        "job_match_score": job_match_score,
+        "keywords_optimization": keywords_optimization,
+        "sections": sections,
+        "insights": insights_list,
+        "candidate_strengths": cand_strengths,
+        "candidates_areas_of_improvements": cand_improve,
+        "job_alignment": {
+            "required_skills": req_skills,
+            "preferred_skills": pref_skills,
+            "experience": experience,
+            "education": education,
+            "overall": job_match_score,
+            "insights": insights_list,
+        },
+        "keywords": {
+            "found": found_kw,
+            "missing": not_found_kw,
+            "jobSpecific": top_3_kw,
+            "score": keywords_optimization,
+        },
+    }
+
+
 def save_resume_analysis_to_db(
     user_email: str,
     session_id: str,
     analysis_result: Dict[str, Any],
-) -> bool:
+    resume_filename: str = "Your_Resume.pdf",
+) -> Dict[str, Any]:
     """
-    Save resume analysis via DRF internal API.
-    Same contract as former django_db.save_resume_analysis_to_db.
+    Persist resume analysis via Nest internal API and return the full result dict for Redis.
+    On POST failure, still returns the built dict so Celery can complete without crashing.
+    analysis_result is the raw LangGraph State dict; nested values are Pydantic model instances.
     """
+    full = build_resume_analysis_result_dict(session_id, resume_filename, analysis_result)
+
     payload = {
         "user_email": user_email,
-        "session_id": session_id,
-        "resume_name": analysis_result.get("resume_name", "Your_Resume.pdf"),
-        "company": analysis_result.get("company", ""),
-        "role": analysis_result.get("role", ""),
-        "job_match_score": analysis_result.get("section_analysis", {}).job_match_score,
-        "format_and_structure": analysis_result.get("section_analysis", {}).format_and_structure,
-        "content_quality": analysis_result.get("section_analysis", {}).content_quality,
-        "length_and_conciseness": analysis_result.get("section_analysis", {}).length_and_conciseness,
-        "keywords_optimization": analysis_result.get("section_analysis", {}).keywords_optimization,
-        "found_keywords": analysis_result.get("keyword_analysis", {}).found_keywords,
-        "not_found_keywords": analysis_result.get("keyword_analysis", {}).not_found_keywords,
-        "top_3_keywords": analysis_result.get("keyword_analysis", {}).top_3_keywords,
-        "required_skills": analysis_result.get("job_alignment_analysis", {}).required_skills,
-        "preferred_skills": analysis_result.get("job_alignment_analysis", {}).preferred_skills,
-        "experience": analysis_result.get("job_alignment_analysis", {}).experience,
-        "education": analysis_result.get("job_alignment_analysis", {}).education,
-        "insights": analysis_result.get("job_alignment_analysis", {}).insights,
-        "candidate_strengths": analysis_result.get("strengths_and_improvements", {}).candidate_strengths,
-        "candidates_areas_of_improvements": analysis_result.get("strengths_and_improvements", {}).candidates_areas_of_improvements,
+        "session_id": full["session_id"],
+        "resume_name": full["resume_name"],
+        "company": full["company"],
+        "role": full["role"],
+        "overall_score": full["overall_score"],
+        "job_match_score": full["job_match_score"],
+        "format_and_structure": int(
+            next((s["score"] for s in full["sections"] if s["name"] == "format_and_structure"), 0)
+        ),
+        "content_quality": int(
+            next((s["score"] for s in full["sections"] if s["name"] == "content_quality"), 0)
+        ),
+        "length_and_conciseness": int(
+            next((s["score"] for s in full["sections"] if s["name"] == "length_and_conciseness"), 0)
+        ),
+        "keywords_optimization": full["keywords_optimization"],
+        "ats_score": int(next((s["score"] for s in full["sections"] if s["name"] == "ats_score"), 0)),
+        "sections": full["sections"],
+        "found_keywords": full["keywords"]["found"],
+        "not_found_keywords": full["keywords"]["missing"],
+        "top_3_keywords": full["keywords"]["jobSpecific"],
+        "required_skills": full["job_alignment"]["required_skills"],
+        "preferred_skills": full["job_alignment"]["preferred_skills"],
+        "experience": full["job_alignment"]["experience"],
+        "education": full["job_alignment"]["education"],
+        "insights": full["insights"],
+        "candidate_strengths": full["candidate_strengths"],
+        "candidates_areas_of_improvements": full["candidates_areas_of_improvements"],
     }
-    return _post("/api/internal/resume-analysis/", payload)
+
+    resp = _post("/api/internal/resume-analysis/", payload)
+    if resp is False:
+        logger.warning(
+            "Nest internal POST /api/internal/resume-analysis/ failed; returning built result for Redis only"
+        )
+    return full
 
 
 def _normalize_interview_type_for_drf(interview_type: str) -> str:
@@ -197,6 +299,11 @@ def save_feedback_items_to_db(
     interaction_logs: Optional[List[Any]] = None,
     interaction_status_logs: Optional[List[Any]] = None,
     user_id: Optional[str] = None,
+    communication_score: Optional[float] = None,
+    grammar_score: Optional[float] = None,
+    communication_metrics: Optional[Dict[str, Any]] = None,
+    grammar_metrics: Optional[Dict[str, Any]] = None,
+    is_free_interview: bool = False,
 ) -> bool:
     """
     Save feedback via NestJS internal API using SaveFeedbackDto schema only.
@@ -221,6 +328,15 @@ def save_feedback_items_to_db(
         payload["sessionId"] = session_id
     if user_id:
         payload["userId"] = user_id
+    if communication_score is not None:
+        payload["communicationScore"] = communication_score
+    if grammar_score is not None:
+        payload["grammarScore"] = grammar_score
+    if communication_metrics is not None:
+        payload["communicationMetrics"] = communication_metrics
+    if grammar_metrics is not None:
+        payload["grammarMetrics"] = grammar_metrics
+    payload["isFreeInterview"] = is_free_interview
     path = "/interview-feedback/"
     full_url = f"{_drf_base_url()}{path}"
     logger.warning(

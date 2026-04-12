@@ -42,7 +42,8 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "https://interviewsta.com",
         "https://*.interviewsta.com",
-        "https://interviewsta-app-frontend.vercel.app"
+        "https://interviewsta-app-frontend.vercel.app",
+        os.getenv("CORS_ORIGINS", "")
     ]
     
     # Session settings

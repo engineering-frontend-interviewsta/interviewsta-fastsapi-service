@@ -17,6 +17,30 @@ import getpass
 from langchain_core.runnables.graph import CurveStyle, MermaidDrawMethod
 from ..utils import get_llm
 
+SCORING_BANDS = """
+Performance bands:
+  0–35   → Poor
+  36–50  → Below Average
+  51–60  → Average
+  61–70  → Good
+  71–80  → Very Good
+  81–90  → Excellent
+  91–100 → Outstanding
+
+Use GRANULAR values (e.g. 67, 73, 82) — never rounded multiples of 10.
+"""
+
+CAREER_COACH_PERSONA = """
+You are an expert career coach and resume strategist with 15+ years of experience helping candidates land their dream jobs. Your role is to provide brutally honest, actionable feedback to improve resumes for specific job opportunities.
+
+## Your Approach:
+- **Be Direct**: Don't sugarcoat issues. Point out weaknesses clearly and explain why they matter to hiring managers
+- **Think Like a Recruiter**: You have 6 seconds to grab attention. What would make you keep reading vs. immediately reject?
+- **Focus on Impact**: Every line should demonstrate value. Generic descriptions are resume killers
+- **Tailor Ruthlessly**: One-size-fits-all resumes fail. Everything must align with the target role
+"""
+
+
 class CompanyandRole(BaseModel):
     '''
     You are provided with job description for an opening, you need to identify-
@@ -25,6 +49,8 @@ class CompanyandRole(BaseModel):
     '''
     company: str = Field(..., description="Company for which the opening is for")
     role: str = Field(..., description="Role for which the job description is")
+
+
 class SectionAnalysis(BaseModel):
     '''
     You are an expert career coach and resume strategist with 15+ years of experience helping candidates land their dream jobs. Your role is to provide brutally honest, actionable feedback to improve resumes for specific job opportunities.
@@ -35,13 +61,25 @@ class SectionAnalysis(BaseModel):
     - **Focus on Impact**: Every line should demonstrate value. Generic descriptions are resume killers
     - **Tailor Ruthlessly**: One-size-fits-all resumes fail. Everything must align with the target role
 
-    You need to assign score for the follow metrics with given input candidate's resume and job description-
+    You need to assign score for the following metrics with given input candidate's resume and job description.
+
+    Performance bands:
+      0–35   → Poor
+      36–50  → Below Average
+      51–60  → Average
+      61–70  → Good
+      71–80  → Very Good
+      81–90  → Excellent
+      91–100 → Outstanding
+
+    Use GRANULAR values (e.g. 67, 73, 82) — never rounded multiples of 10.
     '''
-    job_match_score: int = Field(...,description="0-100 score for how much the candiate's resume aligns with the job description")
-    format_and_structure: int = Field(...,description="0-100 score for the format and structure of the candidate's resume")
-    content_quality: int = Field(...,description="0-100 score for the content quality of the candidate's resume")
-    length_and_conciseness: int = Field(...,description="0-100 score for the length and conciseness of the candidate's resume")
-    keywords_optimization: int = Field(...,description="0-100 score for the keyword optimization of the candidate's resume")
+    job_match_score: int = Field(..., description="0-100 score for how much the candidate's resume aligns with the job description overall")
+    format_and_structure: int = Field(..., description="0-100 score for the format and structure of the candidate's resume (layout, sections, visual hierarchy)")
+    content_quality: int = Field(..., description="0-100 score for the content quality (action verbs, quantified achievements, impact statements)")
+    length_and_conciseness: int = Field(..., description="0-100 score for the length and conciseness (appropriate length, no filler, tight writing)")
+    keywords_optimization: int = Field(..., description="0-100 score for the keyword optimization of the candidate's resume against the job description")
+    ats_score: int = Field(..., description="0-100 score for ATS (Applicant Tracking System) parse-ability: clean formatting, no tables/graphics, standard section headings, machine-readable fonts")
 #
 # class Keyword(BaseModel):
 #     '''
@@ -72,14 +110,20 @@ class Keyword(BaseModel):
     - **Focus on Impact**: Every line should demonstrate value. Generic descriptions are resume killers
     - **Tailor Ruthlessly**: One-size-fits-all resumes fail. Everything must align with the target role
 
-    You need to help with keyword analysis with given input candidate's resume and job description-
+    You need to help with keyword analysis with given input candidate's resume and job description.
+    Focus ONLY on high-signal, role-differentiating keywords: specific frameworks, platforms, tools, domain methodologies, certifications, and specialised technical terms that directly gate hiring decisions.
+
+    ## Strict filtering rules:
+    - **Exclude generic programming languages** (e.g. Python, Java, C++, JavaScript) from `not_found_keywords` if the resume already demonstrates equivalent or higher-level proficiency in a related language or ecosystem. A candidate who knows Java does not need C++ flagged as missing.
+    - **Exclude commodity skills** that virtually every engineer has: Git, Linux, SQL, REST APIs, JSON, HTML, CSS — unless the JD explicitly requires a specific version or certification.
+    - **Exclude soft skills** (communication, teamwork, leadership) from all keyword lists — these belong in the strengths section, not keyword analysis.
+    - **Cap `found_keywords` to the 8 most role-relevant terms** actually present in the resume.
+    - **Cap `not_found_keywords` to the 6 most impactful gaps** — only terms whose absence would materially hurt the candidate's ranking by an ATS or recruiter.
+    - **Do not list interchangeable alternatives**: if React is found, do not list Vue or Angular as missing unless the JD explicitly requires them.
     '''
-    found_keywords: List[str] = Field(..., description="Keywords found in the candidate's resume")
-    not_found_keywords: List[str] = Field(...,
-                                          description="Keywords not found in the candidate's resume related to the job description")
-    top_3_keywords: List[str] = Field(...,
-                                      description="3 Keywords that should be present in candidate's resume to make it more fit for the job")
-    # keyword_score: int = Field(...,description="0-100 score for ")
+    found_keywords: List[str] = Field(..., description="Up to 8 high-signal keywords from the job description that are present in the candidate's resume (role-differentiating terms only, no commodity skills)")
+    not_found_keywords: List[str] = Field(..., description="Up to 6 high-impact keywords from the job description that are absent from the resume and whose absence would materially hurt ATS ranking or recruiter evaluation — exclude generic languages already covered by equivalent skills")
+    top_3_keywords: List[str] = Field(..., description="The 3 most impactful missing keywords the candidate should add to their resume to improve fit — must be specific, non-interchangeable terms")
 
 class StrengthsAndImprovements(BaseModel):
     '''
@@ -91,10 +135,12 @@ class StrengthsAndImprovements(BaseModel):
     - **Focus on Impact**: Every line should demonstrate value. Generic descriptions are resume killers
     - **Tailor Ruthlessly**: One-size-fits-all resumes fail. Everything must align with the target role
 
-    You are given a candidate's resume and a job description, you need to list out strengths and aread of improvements -
+    You are given a candidate's resume and a job description. List specific, actionable strengths and areas of improvement.
+    Address the candidate in second person ("Your experience in...", "You demonstrate...").
+    Be grounded in evidence from the resume — no generic advice.
     '''
-    candidate_strengths: List[str] = Field(..., description="List of strengths of the candidate")
-    candidates_areas_of_improvements: List[str] = Field(..., description="List of improvements that can be made to the candidate")
+    candidate_strengths: List[str] = Field(..., description="3-5 specific strengths of the candidate's resume relative to the job description")
+    candidates_areas_of_improvements: List[str] = Field(..., description="3-5 specific, actionable improvements the candidate should make to their resume")
 
 
 class JobAlignmentAnalysis(BaseModel):
@@ -107,13 +153,24 @@ class JobAlignmentAnalysis(BaseModel):
     - **Focus on Impact**: Every line should demonstrate value. Generic descriptions are resume killers
     - **Tailor Ruthlessly**: One-size-fits-all resumes fail. Everything must align with the target role
 
-    You need to assign score for the follow metrics with given input candidate's resume and job description-
+    You need to assign score for the following metrics with given input candidate's resume and job description.
+
+    Performance bands:
+      0–35   → Poor
+      36–50  → Below Average
+      51–60  → Average
+      61–70  → Good
+      71–80  → Very Good
+      81–90  → Excellent
+      91–100 → Outstanding
+
+    Use GRANULAR values (e.g. 67, 73, 82) — never rounded multiples of 10.
     '''
-    required_skills: int = Field(...,description="0-100 score for how much the candiate's skills in resume aligns with the required skills in job description")
-    preferred_skills: int = Field(...,description="0-100 score for how much the candiate's skills in resume aligns with the preferred skills in job description")
-    experience: int = Field(...,description="0-100 score for how much the candidate`s experience aligns with the job description")
-    education: int = Field(...,description="0-100 score for how much the candidate`s education aligns with the job description")
-    insights: List[str] = Field(...,description="Insights from the analysis")
+    required_skills: int = Field(..., description="0-100 score for how much the candidate's skills in resume align with the REQUIRED skills in the job description")
+    preferred_skills: int = Field(..., description="0-100 score for how much the candidate's skills in resume align with the PREFERRED/NICE-TO-HAVE skills in the job description")
+    experience: int = Field(..., description="0-100 score for how much the candidate's years and type of experience aligns with the job description requirements")
+    education: int = Field(..., description="0-100 score for how much the candidate's education aligns with the job description requirements")
+    insights: List[str] = Field(..., description="3-5 key insights from the job alignment analysis — specific gaps or strong matches between resume and JD")
 
 class State(TypedDict):
     input_message: List[BaseMessage]
@@ -128,7 +185,8 @@ class State(TypedDict):
 
 def company_and_job_description_Node(llm):
     def _Node(state: State) -> State:
-        response = llm.invoke(state["job_description"])
+        message = HumanMessage(content=f"Job Description:\n{state['job_description']}")
+        response = llm.invoke([message])
         state["company"] = response.company
         state["role"] = response.role
         return state

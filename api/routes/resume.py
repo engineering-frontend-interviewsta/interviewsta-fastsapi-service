@@ -2,21 +2,28 @@
 Resume analysis API endpoints
 """
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
 from typing import Optional
+import asyncio
+import json
 import logging
 import base64
+import time
 
 from schemas.resume import (
     ResumeAnalysisResponse,
     ResumeAnalysisStatusResponse
 )
 from api.dependencies import get_current_user, get_redis
+from api.resume_task_status import resolve_resume_task_status
 from tasks.resume_tasks import process_resume_upload
-from tasks.celery_app import celery_app
 from redis import Redis
-from celery.result import AsyncResult
 
 logger = logging.getLogger(__name__)
+
+SSE_POLL_INTERVAL_S = 0.75
+SSE_HEARTBEAT_INTERVAL_S = 20.0
+SSE_MAX_DURATION_S = 125.0
 
 router = APIRouter()
 
@@ -25,6 +32,7 @@ router = APIRouter()
 async def analyze_resume(
     resume: UploadFile = File(...),
     job_description: UploadFile = File(...),
+    session_id: Optional[str] = Form(None),
     user_info: dict = Depends(get_current_user),
     redis_client: Redis = Depends(get_redis)
 ):
@@ -82,9 +90,9 @@ async def analyze_resume(
         resume_b64 = base64.b64encode(resume_bytes).decode("utf-8")
         job_desc_b64 = base64.b64encode(job_desc_bytes).decode("utf-8")
         
-        # Generate session_id for tracking (matching old behavior)
+        # Use caller-provided session_id if present, otherwise generate one
         import uuid
-        session_id = str(uuid.uuid4())
+        session_id = session_id or str(uuid.uuid4())
         
         # Queue analysis task
         task = process_resume_upload.apply_async(
@@ -133,59 +141,16 @@ async def get_analysis_status(
         Task status and results if completed
     """
     try:
-        # Get task result using the same Celery app instance
-        task_result = AsyncResult(task_id, app=celery_app)
-        
-        # Map Celery states to our states
-        state_mapping = {
-            "PENDING": "queued",
-            "STARTED": "processing",
-            "RETRY": "processing",
-            "SUCCESS": "completed",
-            "FAILURE": "failed"
-        }
-        
-        status_str = state_mapping.get(task_result.state, "processing")
-        
-        # Get progress if available
-        progress = 0
-        if task_result.state == "PROGRESS":
-            meta = task_result.info or {}
-            progress = meta.get("progress", 0)
-            status_str = "processing"
-        elif task_result.state == "SUCCESS":
-            progress = 100
-        
-        # Get result or error
-        result = None
-        error = None
-        
-        if task_result.state == "SUCCESS":
-            task_data = task_result.result
-            if task_data and task_data.get("status") == "completed":
-                result = task_data.get("result")
-            elif task_data and task_data.get("status") == "error":
-                status_str = "failed"
-                error = task_data.get("error")
-        elif task_result.state == "FAILURE":
-            error = str(task_result.info)
-        
+        status_str, progress, result, error = resolve_resume_task_status(task_id)
 
         logger.info(
-            "Resume status: task_id=%s state=%s status_str=%s result_type=%s result_is_dict=%s",
+            "Resume status: task_id=%s status_str=%s result_type=%s result_is_dict=%s",
             task_id,
-            getattr(task_result, "state", None),
             status_str,
             type(result).__name__ if result is not None else "None",
             isinstance(result, dict),
         )
-        if result is not None and not isinstance(result, dict):
-            logger.warning(
-                "Resume status: result is not a dict (value=%r), normalizing to None",
-                result,
-            )
-            result = None
-            
+
         return ResumeAnalysisStatusResponse(
             task_id=task_id,
             status=status_str,
@@ -193,10 +158,80 @@ async def get_analysis_status(
             result=result,
             error=error
         )
-        
+
     except Exception as e:
         logger.error(f"Error getting analysis status: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get status: {str(e)}"
         )
+
+
+async def _resume_analysis_sse_events(task_id: str):
+    """Yield SSE lines until completed, failed, or timeout (single HTTP connection)."""
+    deadline = time.monotonic() + SSE_MAX_DURATION_S
+    last_heartbeat = time.monotonic()
+    last_progress_sent = -1
+
+    while time.monotonic() < deadline:
+        status_str, progress, result, error = resolve_resume_task_status(task_id)
+
+        if status_str == "completed" and result is not None:
+            payload = json.dumps(result, ensure_ascii=False)
+            yield f"event: complete\ndata: {payload}\n\n"
+            return
+
+        if status_str == "failed" or error:
+            err_msg = error or "Resume analysis failed"
+            yield f"event: error\ndata: {json.dumps({'error': err_msg})}\n\n"
+            return
+
+        if status_str == "completed" and result is None:
+            yield (
+                "event: error\ndata: "
+                + json.dumps({"error": "Analysis completed but returned no result"})
+                + "\n\n"
+            )
+            return
+
+        if progress != last_progress_sent:
+            last_progress_sent = progress
+            yield (
+                "event: progress\ndata: "
+                + json.dumps({"progress": progress, "status": status_str})
+                + "\n\n"
+            )
+
+        now = time.monotonic()
+        if now - last_heartbeat >= SSE_HEARTBEAT_INTERVAL_S:
+            yield ": ping\n\n"
+            last_heartbeat = now
+
+        await asyncio.sleep(SSE_POLL_INTERVAL_S)
+
+    yield (
+        "event: error\ndata: "
+        + json.dumps({"error": "Resume analysis timed out"})
+        + "\n\n"
+    )
+
+
+@router.get("/{task_id}/stream")
+async def stream_resume_analysis(
+    task_id: str,
+    user_info: dict = Depends(get_current_user),
+):
+    """
+    Server-Sent Events stream until the Celery task completes or fails.
+    Nest (or clients with fetch streaming) should consume this instead of polling /status.
+    """
+    _ = user_info
+    return StreamingResponse(
+        _resume_analysis_sse_events(task_id),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
