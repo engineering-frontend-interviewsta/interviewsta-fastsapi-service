@@ -373,6 +373,13 @@ async def start_interview(
         if getattr(interview_access, "interview_test_id", None) is not None:
             payload["interview_test_id"] = interview_access.interview_test_id
         payload["is_free_interview"] = bool(getattr(interview_access, "is_free_interview", False))
+        # Dev-only: Sarvam STT/TTS — strip unless JWT includes developer or admin
+        roles = user_info.get("roles") or []
+        if not isinstance(roles, list):
+            roles = [roles] if roles else []
+        allowed_sarvam = any(r in ("developer", "admin") for r in roles)
+        if not allowed_sarvam:
+            payload.pop("use_sarvam_audio", None)
         task = process_interview_start.apply_async(
             args=[request.session_id, interview_type, user_id, payload],
             queue="interview",
