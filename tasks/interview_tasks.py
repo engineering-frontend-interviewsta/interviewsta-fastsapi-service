@@ -26,8 +26,15 @@ from workflows.debate import DebateInterviewState
 from workflows.aiml import AimlInterviewState
 from langchain_core.messages import HumanMessage
 from services.audio_processor import AudioProcessor
+from services.sarvam_audio import transcribe_wav_base64, synthesize_speech_mp3_base64
 
 logger = logging.getLogger(__name__)
+
+
+def _use_sarvam_audio(payload: Optional[Dict[str, Any]]) -> bool:
+    if not payload:
+        return False
+    return bool(payload.get("use_sarvam_audio"))
 
 
 # ============================================================================
@@ -556,8 +563,12 @@ def process_interview_start(
         
         audio_base64 = None
         try:
-            audio_base64 = self.audio_processor.synthesize_speech_base64(message)
-            logger.info(f"Audio synthesis successful for {session_id}")
+            if _use_sarvam_audio(payload):
+                audio_base64 = synthesize_speech_mp3_base64(message)
+                logger.info(f"Sarvam TTS successful for {session_id}")
+            else:
+                audio_base64 = self.audio_processor.synthesize_speech_base64(message)
+                logger.info(f"Audio synthesis successful for {session_id}")
         except Exception as e:
             logger.error(f"Error synthesizing audio for {session_id}: {e}")
             # Continue without audio - better than failing completely
@@ -705,7 +716,10 @@ def process_user_response_with_transcription(
             logger.info(f"Transcribing audio for session {session_id}")
             
             try:
-                transcription = self.audio_processor.transcribe_audio(audio_data)
+                if _use_sarvam_audio(payload_from_session):
+                    transcription = transcribe_wav_base64(audio_data)
+                else:
+                    transcription = self.audio_processor.transcribe_audio(audio_data)
                 human_input = transcription.strip()
                 
                 # Store transcript in session
@@ -867,8 +881,12 @@ def process_user_response_with_transcription(
             
             try:
                 logger.info(f"Synthesizing audio for session {session_id}")
-                audio_base64 = self.audio_processor.synthesize_speech_base64(message)
-                logger.info(f"Audio synthesis successful")
+                if _use_sarvam_audio(payload_from_session):
+                    audio_base64 = synthesize_speech_mp3_base64(message)
+                    logger.info("Sarvam TTS synthesis successful")
+                else:
+                    audio_base64 = self.audio_processor.synthesize_speech_base64(message)
+                    logger.info("Audio synthesis successful")
             except Exception as e:
                 logger.error(f"Audio synthesis failed: {e}")
                 # Continue without audio
