@@ -299,6 +299,8 @@ def save_feedback_items_to_db(
     interaction_logs: Optional[List[Any]] = None,
     interaction_status_logs: Optional[List[Any]] = None,
     user_id: Optional[str] = None,
+    telemetry_data: Optional[Dict[str, Any]] = None,
+    meeting_highlight: Optional[str] = None,
     communication_score: Optional[float] = None,
     grammar_score: Optional[float] = None,
     communication_metrics: Optional[Dict[str, Any]] = None,
@@ -309,6 +311,7 @@ def save_feedback_items_to_db(
     Save feedback via NestJS internal API using SaveFeedbackDto schema only.
     Payload must contain DTO fields: interviewTestId, items, strengths, duration,
     areasOfImprovements, interactionLogs, interactionStatusLogs.
+    ``telemetryData`` holds scored video telemetry (timeline, hire_probability, fillerWords, …) when present.
     user_email/session_id/user_id may optionally be forwarded if the Nest endpoint accepts them.
     """
     payload: Dict[str, Any] = {
@@ -320,6 +323,7 @@ def save_feedback_items_to_db(
         "interactionLogs": interaction_logs or [],
         "interactionStatusLogs": interaction_status_logs or [],
         "sessionId": session_id,
+        "telemetryData": telemetry_data if telemetry_data is not None else {},
     }
     # Optionally include identity fields if the NestJS DTO supports them
     if user_email:
@@ -328,6 +332,8 @@ def save_feedback_items_to_db(
         payload["sessionId"] = session_id
     if user_id:
         payload["userId"] = user_id
+    if isinstance(meeting_highlight, str) and meeting_highlight.strip():
+        payload["meetingHighlight"] = meeting_highlight.strip()
     if communication_score is not None:
         payload["communicationScore"] = communication_score
     if grammar_score is not None:

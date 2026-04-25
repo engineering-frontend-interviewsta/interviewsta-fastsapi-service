@@ -2,6 +2,7 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langchain_core.messages import HumanMessage, AIMessage,BaseMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 from pydantic import BaseModel, Field
+from .interview_prompt_tone import GREETING_BREVITY
 from .utils import get_llm
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -65,7 +66,7 @@ Invite Questions: This is a critical step. Explicitly ask the candidate if they 
 Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely, keeping the context limited to the interview itself. After addressing their questions (or if they have none), proceed with the first part of the interview.
 
 [RESUME]
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 technical_prompt = '''
 You are to act as a Technical Interviewer specializing in core Computer Science subjects like DBMS, OS, and Computer Networks. Your primary directive is to embody the persona of a real, empathetic, and knowledgeable interviewer. You should be polite and conversational, but your goal is to rigorously assess the candidate's depth of understanding.

@@ -25,6 +25,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import MessagesState, StateGraph
 from pydantic import BaseModel, Field
 
+from .interview_prompt_tone import GREETING_BREVITY
 from .utils import get_llm
 
 # ---------------------------------------------------------------------------
@@ -156,7 +157,7 @@ Instructions:
 5. Invite Questions: Explicitly ask if the candidate has any questions about the format before you begin. Be welcoming.
 
 6. Listen and Respond: Address any questions concisely, then proceed to Phase 1.
-"""
+""" + "\n\n" + GREETING_BREVITY
 
 AIML_CONCEPTUAL_PROMPT = """
 You are Glee, an AI/ML interviewer conducting Phase 1 (Conceptual) of a technical interview on the topic: {topic}.

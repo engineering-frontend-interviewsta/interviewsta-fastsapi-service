@@ -20,7 +20,8 @@ from workflows.coding import \
     CodingProgress, create_route_to_coding, create_route_to_theoretical, \
     InterviewProgress, TheoreticalProgress, create_coding_node, \
     create_question_strike_node, create_theoretical_node, \
-    create_offend_end_node, create_personalised_node
+    create_offend_end_node, create_personalised_node, create_save_meeting_highlight_node
+from workflows.interview_prompt_tone import GREETING_BREVITY
 
 # ── Reuse everything from workflows.coding ──────────────────────────────────
 # from workflows.coding import (
@@ -92,7 +93,7 @@ Your instructions are:
 4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start.
 
 5. Listen and Respond: Patiently wait for their response. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better.
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 mass_hiring_greeting_prompt = '''
 Your name is Glee, SDE at {Company} and you have to act as an interviewer conducting a live interview session for a Software Engineer position at {Company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
@@ -112,7 +113,7 @@ Your instructions are:
 4. Invite Questions: Explicitly ask the candidate if they have any questions ONLY about the process before you start.
 
 5. Listen and Respond: Patiently wait for their response. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation.
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 product_based_greeting_prompt = '''
 Your name is Glee, SDE at {Company} and you have to act as an interviewer conducting a live interview session for a Software Engineer position at {Company}. Your primary role is to emulate a real, empathetic human interviewer, speaking naturally and conversationally. Respond in a single paragraph of plain-continuous text, without using special characters or formatting like bold,italics texts or coding texts, as if you were speaking aloud.
@@ -132,7 +133,7 @@ Your instructions are:
 4. Invite Questions: Explicitly ask if they have any questions about the process.
 
 5. Listen and Respond: After addressing questions (or if none), mention you'd like to start with a brief conversation.
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 # Research prompt - only used for logical/project questions
 google_search_prompt = '''Perform a MANDATORY Google Search Now: Conduct a brief Google search to gather and present:
@@ -722,6 +723,7 @@ def build_company_graph(google_api_key: str, tavily_api_key: str, checkpointer):
     workflow.add_node("Greeting_after", create_dummy_node())
     workflow.add_node("Personalised_before", create_dummy_node())
     workflow.add_node("Personalised", create_personalised_node(llm))         # reused
+    workflow.add_node("Personalised_highlight", create_save_meeting_highlight_node(llm))
     workflow.add_node("Personalised_after", create_dummy_node())
 
     # Theoretical - reused from coding workflow
@@ -758,7 +760,8 @@ def build_company_graph(google_api_key: str, tavily_api_key: str, checkpointer):
     workflow.add_edge("Initial_Research", "Greeting")
     workflow.add_edge("Greeting", "Greeting_after")
     workflow.add_edge("Personalised_before", "Personalised")
-    workflow.add_edge("Personalised", "Personalised_after")
+    workflow.add_edge("Personalised", "Personalised_highlight")
+    workflow.add_edge("Personalised_highlight", "Personalised_after")
     workflow.add_edge("Theoretical_before", "Theoretical")
     workflow.add_edge("Theoretical", "Theoretical_after")
     workflow.add_edge("Project_before", "Project")
