@@ -11,6 +11,8 @@ from typing import Annotated, Literal, Callable, TypeVar
 import operator
 import os
 import time
+from workflows.interview_prompt_tone import GREETING_BREVITY
+from workflows.rapport_optional_prompts import pick_random_rapport_optional_prompt
 
 S = TypeVar("S")
 
@@ -31,7 +33,7 @@ Your instructions:
 
 IMPORTANT: Do NOT ask about their resume or mention resume details. Focus on getting to know them through conversation.
 {resume_section}
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 ROLE_BASED_PERSONALISED_PROMPT = '''
 Your name is Glee and you are conducting a {role} interview session. Speak naturally and conversationally.
@@ -232,6 +234,8 @@ class RoleBasedInterviewState(MessagesState):
     history: Annotated[str, Field(default="")]
     resume: Annotated[str, Field(default="No resume provided")]
     role: Annotated[str, Field(default="")]  # Frontend, Backend, UI/UX, AI/ML, Data Science
+    rapport_optional_prompt: Annotated[str, Field(default="")]
+    meeting_highlight: Annotated[str, Field(default="")]
 
 
 class InterviewProgress(BaseModel):
@@ -325,16 +329,37 @@ def create_route_to_greeting(llm) -> Callable:
 
 def create_personalised_node(llm, role: str) -> Callable:
     def _Node(state: RoleBasedInterviewState) -> RoleBasedInterviewState:
+        first_rapport_turn = False
         if state["LastNode"] != "Personalised":
-            prompt = ROLE_BASED_PERSONALISED_PROMPT.format(role=role)
+            first_rapport_turn = True
+            optional_prompt = state.get("rapport_optional_prompt", "")
+            if not optional_prompt:
+                optional_prompt = pick_random_rapport_optional_prompt()
+                state["rapport_optional_prompt"] = optional_prompt
+            prompt = (
+                ROLE_BASED_PERSONALISED_PROMPT.format(role=role)
+                + "\n\nOptional rapport focus (pick naturally at least once): "
+                + optional_prompt
+            )
             personalised_prompt = ChatPromptTemplate.from_messages([
                 ("system", prompt)
             ])
             input_messages = personalised_prompt.format_messages()
             state["messages"] = input_messages + state["messages"]
             state["LastNode"] = "Personalised"
-        
-        response = invoke_with_retry(llm, state["messages"])
+
+        invoke_messages = state["messages"]
+        if first_rapport_turn:
+            invoke_messages = state["messages"] + [
+                HumanMessage(
+                    content=(
+                        "For this first rapport turn, ask ONE warm question based on this prompt: "
+                        f"{state.get('rapport_optional_prompt', '')}. "
+                        "Do not start with university/education/background."
+                    )
+                )
+            ]
+        response = invoke_with_retry(llm, invoke_messages)
         state["messages"] = state["messages"] + [response]
         state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
         state["LastNode"] = "Personalised"
@@ -347,6 +372,24 @@ def create_route_to_personalised(llm) -> Callable:
         progress_llm = llm.with_structured_output(PersonalisedProgress)
         response = invoke_with_retry(progress_llm, [{"role": "human", "content": state["history"]}])
         return response.send_to_which_node
+    return _Node
+
+
+def create_save_meeting_highlight_node(llm) -> Callable:
+    def _Node(state: RoleBasedInterviewState) -> RoleBasedInterviewState:
+        history = (state.get("history", "") or "").strip()
+        if not history:
+            return state
+        prompt = (
+            "Summarize the conversation so far in one concise sentence (max 30 words), "
+            "focused on rapport details and candidate context.\n\n"
+            f"{history[-2500:]}"
+        )
+        response = invoke_with_retry(llm, [{"role": "human", "content": prompt}])
+        highlight = getattr(response, "content", "") if response else ""
+        if isinstance(highlight, str) and highlight.strip():
+            state["meeting_highlight"] = highlight.strip()
+        return state
     return _Node
 
 
@@ -459,6 +502,7 @@ def get_role_based_graph(google_api_key: str, role: str, checkpointer):
     workflow.add_node("Greeting_after", create_dummy_node())
     workflow.add_node("Personalised_before", create_dummy_node())
     workflow.add_node("Personalised", create_personalised_node(llm, role))
+    workflow.add_node("Personalised_highlight", create_save_meeting_highlight_node(llm))
     workflow.add_node("Personalised_after", create_dummy_node())
     workflow.add_node("Technical_before", create_dummy_node())
     workflow.add_node("Technical", create_technical_node(llm, role))
@@ -477,7 +521,8 @@ def get_role_based_graph(google_api_key: str, role: str, checkpointer):
     # Add edges
     workflow.add_edge("Greeting", "Greeting_after")
     workflow.add_edge("Personalised_before", "Personalised")
-    workflow.add_edge("Personalised", "Personalised_after")
+    workflow.add_edge("Personalised", "Personalised_highlight")
+    workflow.add_edge("Personalised_highlight", "Personalised_after")
     workflow.add_edge("Technical_before", "Technical")
     workflow.add_edge("Technical", "Technical_after")
     workflow.add_edge("Coding_before", "Coding")

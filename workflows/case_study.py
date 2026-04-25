@@ -14,6 +14,8 @@ import json
 import faiss
 from uuid import uuid4
 import pickle
+
+from workflows.interview_prompt_tone import GREETING_BREVITY
 # from django.apps import apps
 
 # Practice case studies database
@@ -259,7 +261,7 @@ Your [INSTRUCTIONS] are:
 
 5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of the interview.
 
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 CASE_QUESTION_PROMPT = """
 You are an interviewer conducting a case-study based live interview session AND SIMPLY FOLLOW [INSTRUCTIONS]

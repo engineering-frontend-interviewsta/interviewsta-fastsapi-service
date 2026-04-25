@@ -27,7 +27,7 @@ from schemas.interview import (
     VideoQualityData,
     InterviewStartStatusResponse,
     VideoTelemetryData,
-    # VideoTelemetryPayload
+    InterviewVideoTelemetrySample,
 )
 from api.dependencies import (
     get_current_user,
@@ -49,6 +49,53 @@ from schemas.feedback import FeedbackStatusResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Per-interval video telemetry for scoring (session:{id}:video_telemetry_samples).
+VIDEO_TELEMETRY_SAMPLES_TTL_SEC = 3600
+VIDEO_TELEMETRY_MAX_SAMPLES = 500
+
+_SPEECH_TELEMETRY_FIELD_KEYS = frozenset(
+    {
+        "clipping",
+        "currIntSegmentCounts",
+        "currIntSegmentWords",
+        "currIntSegmentWpm",
+        "currentWpm",
+        "currentWPM",
+        "fillerCount",
+        "filler_count",
+        "latestSegmentText",
+        "noiseFloorDb",
+        "rmsDb",
+        "segmentCount",
+        "snrDb",
+        "speakingTimeMs",
+        "totalWords",
+        "webSpeechActive",
+        "deadPauseCount",
+        "deadPauses",
+    }
+)
+
+
+def _merge_root_speech_fields_into_nested(stored: Dict[str, Any]) -> None:
+    base = stored.get("speech")
+    nested: Dict[str, Any] = dict(base) if isinstance(base, dict) else {}
+    for k in list(stored.keys()):
+        if k in _SPEECH_TELEMETRY_FIELD_KEYS:
+            v = stored.pop(k, None)
+            if k not in nested:
+                nested[k] = v
+    if nested:
+        stored["speech"] = nested
+
+
+def _video_telemetry_samples_key(session_id: str) -> str:
+    return f"session:{session_id}:video_telemetry_samples"
+
+
+def _video_telemetry_environment_key(session_id: str) -> str:
+    return f"session:{session_id}:video_telemetry_environment"
 
 
 def _user_identifier(user_info: Dict[str, Any]) -> str:
@@ -702,7 +749,62 @@ async def submit_video_quality(
         )
 
 @router.post("/{session_id}/video-telemetry")
-async def set_video_telemetry(
+async def post_video_telemetry(
+    session_id: str,
+    payload: InterviewVideoTelemetrySample,
+    user_info: Dict = Depends(get_current_user),
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
+    redis_client: Redis = Depends(get_redis),
+):
+    """
+    Append one telemetry sample (~20s). ``environment`` stored once (SET NX); per-tick fields go to
+    Redis list ``session:{session_id}:video_telemetry_samples`` (used by feedback ``telemetryData``).
+    """
+    try:
+        session_manager = InterviewSessionManager(redis_client)
+        session = session_manager.get_session(session_id)
+        if not session or session["user_id"] != _user_identifier(user_info):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this session",
+            )
+
+        stored = payload.model_dump(mode="json", by_alias=True, exclude_none=False)
+        _merge_root_speech_fields_into_nested(stored)
+        env_val = stored.get("environment")
+        if env_val is not None:
+            env_key = _video_telemetry_environment_key(session_id)
+            redis_client.set(
+                env_key,
+                json.dumps(env_val, default=str),
+                ex=VIDEO_TELEMETRY_SAMPLES_TTL_SEC,
+                nx=True,
+            )
+
+        series_payload = {k: v for k, v in stored.items() if k != "environment"}
+        key = _video_telemetry_samples_key(session_id)
+        redis_client.lpush(key, json.dumps(series_payload, default=str))
+        redis_client.ltrim(key, 0, VIDEO_TELEMETRY_MAX_SAMPLES - 1)
+        redis_client.expire(key, VIDEO_TELEMETRY_SAMPLES_TTL_SEC)
+
+        count = redis_client.llen(key)
+        return {
+            "status": "accepted",
+            "message": "Video telemetry sample recorded",
+            "count": count,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error storing video telemetry for session {session_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@router.post("/{session_id}/video-telemetry-legacy")
+async def set_video_telemetry_legacy(
     session_id: str,
     payload: VideoTelemetryData,
     user_info: Dict = Depends(get_current_user),
@@ -710,9 +812,8 @@ async def set_video_telemetry(
     redis_client: Redis = Depends(get_redis),
 ):
     """
-    Set video telemetry for a session. Accepts payload:
-    { "type": "video_quality", "data": { face, gaze, confidence, nervousness, engagement, distraction, big5_features } }.
-    Stores soft skills in video_metrics (for aggregation) and big5_features in big5_profile:{session_id}.
+    Legacy flat soft-skill telemetry. Stores running average in ``session:{id}:video_metrics``.
+    New clients should use POST ``/{session_id}/video-telemetry`` with InterviewVideoTelemetrySample.
     """
     try:
         session_manager = InterviewSessionManager(redis_client)
@@ -778,31 +879,80 @@ async def get_video_telemetry(
     interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
     redis_client: Redis = Depends(get_redis),
 ):
-    """Get stored video telemetry (running average) for the session. Same shape as set payload."""
+    """One-shot ``environment`` plus time-series ``samples`` (oldest first), same keys scoring uses."""
     try:
         session_manager = InterviewSessionManager(redis_client)
         session = session_manager.get_session(session_id)
-        if not session or session["user_id"] != user_info["email"]:
+        if not session or session["user_id"] != _user_identifier(user_info):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this session",
+            )
+
+        env_key = _video_telemetry_environment_key(session_id)
+        env_raw = redis_client.get(env_key)
+        environment = None
+        if env_raw:
+            try:
+                environment = json.loads(env_raw)
+            except json.JSONDecodeError:
+                logger.warning("Invalid video_telemetry environment JSON for session %s", session_id)
+
+        key = _video_telemetry_samples_key(session_id)
+        raw = redis_client.lrange(key, 0, -1)
+        samples = []
+        for item in reversed(raw):
+            try:
+                samples.append(json.loads(item))
+            except json.JSONDecodeError:
+                logger.warning("Skipping invalid video telemetry JSON for session %s", session_id)
+
+        return {
+            "status": "ok",
+            "environment": environment,
+            "count": len(samples),
+            "samples": samples,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reading video telemetry for session {session_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
+        )
+
+
+@router.get("/{session_id}/video-telemetry-legacy")
+async def get_video_telemetry_legacy(
+    session_id: str,
+    user_info: Dict = Depends(get_current_user),
+    interview_access: InterviewAccessTokenPayload = Depends(get_interview_access_payload),
+    redis_client: Redis = Depends(get_redis),
+):
+    """Legacy: running average from ``video_metrics`` / ``video_telemetry_count``."""
+    try:
+        session_manager = InterviewSessionManager(redis_client)
+        session = session_manager.get_session(session_id)
+        if not session or session["user_id"] != _user_identifier(user_info):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to access this session")
 
-        avg_key = f"session:{session_id}:video_telemetry_avg"
-        # big5_key = f"big5_profile:{session_id}"
+        avg_key = f"session:{session_id}:video_metrics"
         count_key = f"session:{session_id}:video_telemetry_count"
-
         avg_json = redis_client.get(avg_key)
         if not avg_json:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No video telemetry for this session")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No legacy video telemetry for this session",
+            )
 
         data = json.loads(avg_json)
         count = int(redis_client.get(count_key) or 0)
-        # big5_json = redis_client.get(big5_key)
-        # big5_features = json.loads(big5_json) if big5_json else None
-        # data["big5_features"] = big5_features
         return {"type": "video_quality", "data": data, "count": count}
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting video telemetry for session {session_id}: {e}", exc_info=True)
+        logger.error(f"Error getting legacy video telemetry for session {session_id}: {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 

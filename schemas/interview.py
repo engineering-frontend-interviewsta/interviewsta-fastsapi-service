@@ -1,8 +1,8 @@
 """
 Pydantic schemas for interview operations
 """
-from pydantic import BaseModel, Field
-from typing import Optional, Literal, Dict, Any, Tuple
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, Literal, Dict, Any, Tuple, List, Union
 from datetime import datetime
 
 # Allowed fastapi_interview_type values (from X-Interview-Access-Token payload)
@@ -161,7 +161,7 @@ class InterviewStartStatusResponse(BaseModel):
 # big5_features can be Dict[str, float] or Dict[str, Any]
 
 class VideoTelemetryData(BaseModel):
-    """Video telemetry data (soft skills + optional Big5)."""
+    """Legacy flat video telemetry (soft skills). Prefer InterviewVideoTelemetrySample for new clients."""
     face: str = "ok"
     gaze: Optional[float] = None
     confidence: Optional[float] = None
@@ -169,4 +169,36 @@ class VideoTelemetryData(BaseModel):
     engagement: Optional[float] = None
     distraction: Optional[float] = None
     big5_features: Optional[Dict[str, Any]] = None
+
+
+def _snake_to_camel(name: str) -> str:
+    parts = name.split("_")
+    return parts[0] + "".join(p[:1].upper() + p[1:] if p else "" for p in parts[1:])
+
+
+class InterviewVideoTelemetrySample(BaseModel):
+    """
+    One client-side telemetry batch (e.g. every ~20s): environment, audio, camera, lighting, etc.
+    Nested objects may be null or partially filled; unknown top-level fields are preserved.
+    Accepts JSON camelCase keys from the browser.
+    """
+
+    model_config = ConfigDict(
+        extra="allow",
+        populate_by_name=True,
+        alias_generator=_snake_to_camel,
+    )
+
+    time: str  # ISO 8601 from client
+    duration: Optional[Union[int, float, str]] = None  # seconds; client may send number or string
+    environment: Optional[Dict[str, Any]] = None
+    audio: Optional[Dict[str, Any]] = None
+    background: Optional[Dict[str, Any]] = None
+    camera: Optional[Dict[str, Any]] = None
+    critical_issues: Optional[List[Any]] = None
+    lighting: Optional[Dict[str, Any]] = None
+    overall_score: Optional[float] = None
+    suggestions: Optional[List[str]] = None
+    presence: Optional[Dict[str, Any]] = None
+    speech: Optional[Dict[str, Any]] = None
 

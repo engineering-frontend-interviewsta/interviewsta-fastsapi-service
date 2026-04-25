@@ -9,6 +9,8 @@ import inspect
 import operator
 import random
 import json
+from workflows.interview_prompt_tone import GREETING_BREVITY
+from workflows.rapport_optional_prompts import pick_random_rapport_optional_prompt
 
 
 COMMUNICATION_RAPPORT_PROMPT = '''
@@ -41,7 +43,7 @@ Your [INSTRUCTIONS] are:
 3. Explain the Format: Briefly explain that this is a communication interview that will start with a conversation about their hobbies and interests, then assess their skills through speaking exercises, writing comprehension, and vocabulary MCQ exercises. Mention that the focus is on their communication skills and encourage them to do their best.
 
 4. Invite Questions: Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 COMMUNICATION_SPEAKING_QUESTION_PROMPT = """
 You are an interviewer conducting a communication based live interview session. Your role is to present a speaking exercise.
@@ -175,6 +177,8 @@ class CommunicationInterviewState(MessagesState):
   LastNode: Annotated[str, Field(default="")]
   history: Annotated[str, Field(default="")]
   current_query: Annotated[str, Field(default="")]
+  rapport_optional_prompt: Annotated[str, Field(default="")]
+  meeting_highlight: Annotated[str, Field(default="")]
 
   current_mcq_entity: Annotated[MCQEntity, Field(default_factory=MCQEntity)]
   current_writing_comprehension: Annotated[WritingComprehensionEntity, Field(default_factory=WritingComprehensionEntity)]
@@ -276,22 +280,62 @@ from langchain_core.prompts import ChatPromptTemplate
 
 def create_rapport_node(llm) -> Callable:
   def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
+    first_rapport_turn = False
     if state["LastNode"] != "Rapport":
+      first_rapport_turn = True
+      optional_prompt = state.get("rapport_optional_prompt", "")
+      if not optional_prompt:
+          optional_prompt = pick_random_rapport_optional_prompt()
+          state["rapport_optional_prompt"] = optional_prompt
       print("Hereee in rapport")
       rapport_prompt = ChatPromptTemplate.from_messages([
-          ("system", COMMUNICATION_RAPPORT_PROMPT)
+          (
+              "system",
+              COMMUNICATION_RAPPORT_PROMPT
+              + "\n\nOptional rapport focus (pick naturally at least once): "
+              + optional_prompt,
+          )
       ])
       input_messages = rapport_prompt.format_messages()
       state["messages"] = input_messages + state["messages"]
       state["LastNode"] = "Rapport"
 
-    response = llm.invoke(state["messages"])
+    invoke_messages = state["messages"]
+    if first_rapport_turn:
+      invoke_messages = state["messages"] + [
+          HumanMessage(
+              content=(
+                  "For this first rapport turn, ask ONE warm question based on this prompt: "
+                  f"{state.get('rapport_optional_prompt', '')}. "
+                  "Do not start with university/education/background."
+              )
+          )
+      ]
+    response = llm.invoke(invoke_messages)
     state["messages"] = state["messages"] + [response]
     state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
     state["LastNode"] = "Rapport"
 
     # print("Whatttt the fuckkk")
 
+    return state
+  return _Node
+
+
+def create_save_meeting_highlight_node(llm) -> Callable:
+  def _Node(state: CommunicationInterviewState) -> CommunicationInterviewState:
+    history = (state.get("history", "") or "").strip()
+    if not history:
+      return state
+    prompt = (
+      "Summarize the conversation so far in one concise sentence (max 30 words), "
+      "focused on rapport details and candidate context.\n\n"
+      f"{history[-2500:]}"
+    )
+    response = llm.invoke(prompt)
+    highlight = getattr(response, "content", "") if response else ""
+    if isinstance(highlight, str) and highlight.strip():
+      state["meeting_highlight"] = highlight.strip()
     return state
   return _Node
 
@@ -788,6 +832,7 @@ def build_communication_graph(google_api_key: str, checkpointer):
     workflow.add_node("Offensive", create_dummy_node())
     workflow.add_node("Rapport_before", create_dummy_node())
     workflow.add_node("Rapport", create_rapport_node(llm))
+    workflow.add_node("Rapport_highlight", create_save_meeting_highlight_node(llm))
     workflow.add_node("Rapport_after", create_dummy_node())
     workflow.add_node("PersonalDetails_before", create_personal_details_before_node(llm))
     workflow.add_node("PersonalDetails", create_personal_details_node(llm))
@@ -810,7 +855,8 @@ def build_communication_graph(google_api_key: str, checkpointer):
 
     workflow.add_edge("Greeting", "Greeting_after")
     workflow.add_edge("Rapport_before", "Rapport")
-    workflow.add_edge("Rapport", "Rapport_after")
+    workflow.add_edge("Rapport", "Rapport_highlight")
+    workflow.add_edge("Rapport_highlight", "Rapport_after")
     workflow.add_edge("PersonalDetails_before", "PersonalDetails")
     workflow.add_edge("PersonalDetails", "PersonalDetails_after")
     # Speaking_before will send a confirmation message, then go to Speaking

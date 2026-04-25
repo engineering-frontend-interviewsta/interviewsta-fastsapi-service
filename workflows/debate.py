@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field, ConfigDict
 from typing import Annotated, Literal, List, Callable, TypeVar
 import os
 
+from workflows.interview_prompt_tone import GREETING_BREVITY
+
 
 # ====== PROMPTS ======
 
@@ -38,7 +40,7 @@ Your [INSTRUCTIONS] are:
    Do NOT ask them to propose a topic; you must choose the motion yourself from tech/AI/corporate themes.
 4. Ask the candidate to choose a side (for or against) and to briefly state their initial position.
 5. Keep the tone supportive and encouraging, emphasising that this is safe practice and not an exam.
-"""
+""" + "\n\n" + GREETING_BREVITY
 
 DEBATE_MAIN_PROMPT = """
 You are continuing a structured debate practice session with a student.

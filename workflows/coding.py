@@ -19,6 +19,8 @@ from typing_extensions import TypedDict
 import inspect
 import os
 from uuid import uuid4
+from workflows.interview_prompt_tone import GREETING_BREVITY
+from workflows.rapport_optional_prompts import pick_random_rapport_optional_prompt
 
 
 class Questions(BaseModel):
@@ -37,6 +39,8 @@ class InterviewState(MessagesState):
     Difficulty: Annotated[str, Field(default="Medium", description="Difficulty of the interview")]
     Tags: Annotated[str, Field(default=" ", description="Tags of interview questions")]
     history: Annotated[str, Field(default="", description="Logging the history of the chat thus far.")]
+    rapport_optional_prompt: Annotated[str, Field(default="", description="Random optional rapport prompt chosen for this session.")]
+    meeting_highlight: Annotated[str, Field(default="", description="Short meeting highlight captured after rapport/personalized phase.")]
 
 
 class CompanyInterviewState(InterviewState):
@@ -212,7 +216,7 @@ Your instructions are:
 4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
 
 5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of the interview. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better before beginning the coding assessment.
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 
 subject_greeting_prompt = '''
@@ -229,7 +233,7 @@ Your instructions are:
 4. Invite Questions: This is a critical step. Explicitly ask the candidate if they have any questions ONLY about the process before you start. Use inviting language to make them feel comfortable asking.
 
 5. Listen and Respond: Patiently wait for their response. If they have questions, answer them clearly and concisely but only relevant in the context of interview. After addressing their questions (or if they have none), mention that you'd like to start with a brief conversation to get to know them better before beginning the coding assessment.
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 
 coding_personalised_prompt = '''
@@ -364,16 +368,39 @@ def create_route_to_greeting(InterviewProgress_llm) -> Callable:
 def create_personalised_node(llm) -> Callable:
     def _Node(state: S) -> S:
         print("We are in personalised node here")
+        first_rapport_turn = False
         if state["LastNode"] != "Personalised":
+            first_rapport_turn = True
+            optional_prompt = state.get("rapport_optional_prompt", "")
+            if not optional_prompt:
+                optional_prompt = pick_random_rapport_optional_prompt()
+                state["rapport_optional_prompt"] = optional_prompt
             personalised_prompt = ChatPromptTemplate.from_messages([
-                ("system", coding_personalised_prompt)
+                (
+                    "system",
+                    coding_personalised_prompt
+                    + "\n\nOptional rapport focus (pick naturally at least once): "
+                    + optional_prompt,
+                )
             ])
             input_messages = personalised_prompt.format_messages()
 
             state["messages"][0].content = input_messages[0].content
             state["LastNode"] = "Personalised"
-        
-        response = llm.invoke(state["messages"])
+
+        invoke_messages = state["messages"]
+        if first_rapport_turn:
+            # Force the first rapport question to vary by selected optional prompt.
+            invoke_messages = state["messages"] + [
+                HumanMessage(
+                    content=(
+                        "For this first rapport turn, ask ONE warm question based on this prompt: "
+                        f"{state.get('rapport_optional_prompt', '')}. "
+                        "Do not start with university/education/background."
+                    )
+                )
+            ]
+        response = llm.invoke(invoke_messages)
         # print("This is the response", response)
         state["messages"] = state["messages"] + [response]
         state["history"] = state["history"] + "\n" + "Interviewer-" + response.content
@@ -388,6 +415,24 @@ def create_route_to_personalised(PersonalisedProgress_llm) -> Callable:
         response = PersonalisedProgress_llm.invoke(state["history"])
         print("This is the personalised routing node", response.send_to_which_node)
         return response.send_to_which_node
+    return _Node
+
+
+def create_save_meeting_highlight_node(llm) -> Callable:
+    def _Node(state: S) -> S:
+        history = (state.get("history", "") or "").strip()
+        if not history:
+            return state
+        prompt = (
+            "Summarize the conversation so far in one concise sentence (max 30 words), "
+            "focused on rapport details and candidate context.\n\n"
+            f"{history[-2500:]}"
+        )
+        response = llm.invoke(prompt)
+        highlight = getattr(response, "content", "") if response else ""
+        if isinstance(highlight, str) and highlight.strip():
+            state["meeting_highlight"] = highlight.strip()
+        return state
     return _Node
 
 
@@ -591,6 +636,7 @@ def get_graph(input_type: str, google_api_key: str, tavily_api_key: str, checkpo
     workflow.add_node("Greeting_after", create_dummy_node())
     workflow.add_node("Personalised_before", create_dummy_node())
     workflow.add_node("Personalised", create_personalised_node(llm))
+    workflow.add_node("Personalised_highlight", create_save_meeting_highlight_node(llm))
     workflow.add_node("Personalised_after", create_dummy_node())
     workflow.add_node("Theoretical_before", create_dummy_node())
     workflow.add_node("Theoretical", create_theoretical_node(llm))
@@ -609,7 +655,8 @@ def get_graph(input_type: str, google_api_key: str, tavily_api_key: str, checkpo
     workflow.add_edge("Initial_research", "Greeting")
     workflow.add_edge("Greeting", "Greeting_after")
     workflow.add_edge("Personalised_before", "Personalised")
-    workflow.add_edge("Personalised", "Personalised_after")
+    workflow.add_edge("Personalised", "Personalised_highlight")
+    workflow.add_edge("Personalised_highlight", "Personalised_after")
     workflow.add_edge("Theoretical_before", "Theoretical")
     workflow.add_edge("Theoretical", "Theoretical_after")
     workflow.add_edge("Coding_before", "Coding")

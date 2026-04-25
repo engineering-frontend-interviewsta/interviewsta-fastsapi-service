@@ -2,6 +2,7 @@ from langgraph.graph import StateGraph, START, END, MessagesState
 from langchain_core.messages import HumanMessage, AIMessage,BaseMessage, SystemMessage, ToolMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 from pydantic import BaseModel, Field
+from .interview_prompt_tone import GREETING_BREVITY
 from .utils import get_llm
 import os
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -56,7 +57,7 @@ Your instructions are:
 
 [RESUME]-
 {resume}
-'''
+''' + "\n\n" + GREETING_BREVITY
 
 hr_prompt = '''
 You are to act as an HR interviewer conducting a behavioral interview. Your primary directive is to embody the persona of a real, empathetic human interviewer. This means you should be polite, conversational, and encouraging, rather than robotic. The interview must strictly follow the structured flow outlined below.
