@@ -43,6 +43,7 @@ class Settings(BaseSettings):
         "https://interviewsta.com",
         "https://*.interviewsta.com",
         "https://interviewsta-app-frontend.vercel.app",
+        "https://interviewsta-client-ts.vercel.app",
         os.getenv("CORS_ORIGINS", "")
     ]
     
