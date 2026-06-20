@@ -8,7 +8,7 @@ import logging
 import time
 
 from config import get_settings
-from api.routes import interview, resume, feedback
+from api.routes import interview, resume, feedback, comm
 
 # Configure logging
 logging.basicConfig(
@@ -86,6 +86,7 @@ async def root():
 app.include_router(interview.router, prefix="/api/v1/interview", tags=["Interview"])
 app.include_router(resume.router, prefix="/api/v1/resume", tags=["Resume"])
 app.include_router(feedback.router, prefix="/api/v1/feedback", tags=["Feedback"])
+app.include_router(comm.router, prefix="/api/v1/comm", tags=["CommByAI"])
 
 
 if __name__ == "__main__":

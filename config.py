@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     CORS_ORIGINS: list = [
         "http://localhost:3000",
         "http://localhost:5173",
+        "http://localhost:5174",  # CommByAI-client dev
+        "http://localhost:5175",  # interviewsta-hub dev
         "https://interviewsta.com",
         "https://*.interviewsta.com",
         "https://interviewsta-app-frontend.vercel.app",
