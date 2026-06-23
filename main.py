@@ -1,5 +1,5 @@
 """
-FastAPI Interview Service - Main Application
+FastAPI CommByAI Service - Main Application
 """
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +8,7 @@ import logging
 import time
 
 from config import get_settings
-from api.routes import interview, resume, feedback, comm
+from api.routes import comm
 
 # Configure logging
 logging.basicConfig(
@@ -23,7 +23,7 @@ settings = get_settings()
 app = FastAPI(
     title=settings.SERVICE_NAME,
     version=settings.VERSION,
-    description="Microservice for handling AI-powered interview sessions",
+    description="Microservice for CommByAI AI tutoring",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -83,9 +83,6 @@ async def root():
 
 
 # Include routers
-app.include_router(interview.router, prefix="/api/v1/interview", tags=["Interview"])
-app.include_router(resume.router, prefix="/api/v1/resume", tags=["Resume"])
-app.include_router(feedback.router, prefix="/api/v1/feedback", tags=["Feedback"])
 app.include_router(comm.router, prefix="/api/v1/comm", tags=["CommByAI"])
 
 
